@@ -9,6 +9,7 @@ import traceback as trc
 import modules.om_logging as oml
 import modules.om_observer as omo
 import modules.om_hyper_params as omhp
+import modules.om_general_settings as omgs
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -93,7 +94,7 @@ class App():
 
     def draw_footer(s):
         footer = st.container()
-        with open('./css/custom.css') as f:
+        with open('css/custom.css') as f:
             st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
 
         footer_html = """
@@ -171,18 +172,31 @@ class App():
         cols=widget.columns(2)
         col1=cols[0]
         col2=cols[1]
-        s.hyper_parameters.num_epochs=col1.slider(label="Epochs",min_value=1,max_value=200,value=20)
+        s.hyper_parameters.max_epochs=col1.slider(label="Epochs",min_value=1,max_value=200,value=8)
         s.hyper_parameters.batch_size=col1.slider(label="Batch Size",min_value=1,max_value=128,value=1)
         s.hyper_parameters.learning_rate=col1.slider(label="Learning Rate",min_value=1e-6,max_value=1e-2,value=1e-3)
         s.hyper_parameters.first_layer_neurons=col2.slider(label="First Layer Neurons",min_value=1,max_value=1000,value=30)
         s.hyper_parameters.hidden_layers=col2.slider(label="Hidden Layers",min_value=1,max_value=10,value=2)
-        s.hyper_parameters.output_nodes=col2.slider(label="Output Nodes",min_value=1,max_value=10,value=1)
+        s.hyper_parameters.output_nodes=col2.slider(label="Output Nodes",min_value=1,max_value=10,value=1)        
+        s.hyper_parameters.model_file=widget.text_input("Model File",value="sd15.safetensors")
         widget.selectbox("Optimizer", ["Adam","Adamax","AdamW","Adagrad"])
         return
     
+    def draw_settings_widget(s):
+        s.settings=omgs.OMGeneralSettings()
+        widget=s.body.expander("General Settings")
+        #project_name = "pernille_harder_211220231821"        
+        #model_file="v1-5-pruned-emaonly.safetensors" # cyberrealistic_v40.safetensors | realcartoon3d_v8.safetensors" | "realcartoonRealistic_v11.safetensors" | aZovyaPhotoreal_v2.safetensors"
+        #model_url=f"https://xyz.com/{s.model_file}"
+        s.settings.model_file=widget.text_input("Model File", value="v1-5-pruned-emaonly.safetensors")
+        oml.debug(f"mod_fi={s.settings.model_file}")
+        s.settings.model_cache_folder=widget.text_input("Model Cache Folder", value="D:\Apps\stable-diffusion-webui\models\Stable-diffusion")
+        return
+    
     def draw_template(s):
-        s.body=st.container(border=False)
+        s.body=st.container()
         s.draw_hyper_parameter_widget()
+        s.draw_settings_widget()
         #s.draw_input_data_widget()
         #s.draw_progress_widget()
         #s.draw_training_result_widget()
@@ -203,7 +217,8 @@ class App():
         #omt.train_model(s.hyper_parameters,observer, model_callback)
         lora_trainer=omlt.OMLoRATrainer()
         try:
-            lora_trainer.start_training(project_name="pernille_harder_211220231821",project_dir="projects")
+            lora_trainer.start_training(project_name="pernille_harder_211220231821",project_dir="projects",batch_size=s.hyper_parameters.batch_size, 
+                                        max_epochs=s.hyper_parameters.max_epochs,model_file=s.settings.model_file,model_cache_folder=s.settings.model_cache_folder)
             oml.success("model was trained!")
             st.success("model was trained!")
         except():

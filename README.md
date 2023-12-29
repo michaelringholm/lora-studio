@@ -15,3 +15,8 @@ pip install -r requirements.txt
 
 # Run UI
 streamlit run app.py
+
+# Install torch CUDA
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+https://pytorch.org/get-started/locally/

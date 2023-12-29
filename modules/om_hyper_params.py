@@ -1,4 +1,4 @@
-import keras
+#import keras
 
 class OMHyperParameters():
     def __init__(s):
@@ -8,7 +8,7 @@ class OMHyperParameters():
         s.hidden_layers:int=2 # good starting point
         s.output_nodes:int
         s.learning_rate:float=1e-3 # good starting point
-        s.optimizer=keras.optimizers.SGD(learning_rate=s.learning_rate) # use any keras optimizer
+        s.optimizer="Adam" #keras.optimizers.SGD(learning_rate=s.learning_rate) # use any keras optimizer
         s.loss_function="mean_squared_error" # mse default, can use any keras.losses function
         return
     
