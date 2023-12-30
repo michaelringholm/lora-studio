@@ -16,6 +16,9 @@ class OMObserver():
                 step=args[1]
                 current_loss=args[2]
                 avr_loss=args[3]
+                global_step=args[4]
+                #oml.debug(f"batch={batch}")
+                #oml.debug(f"global_step={global_step}")
                 s.app.update_training_progress(epoch,step,current_loss,avr_loss)
             if(event==s.TRANING_START_VALIDATE_EVENT):
                     pre_steps_per_epoch=args[0]

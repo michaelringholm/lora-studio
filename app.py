@@ -115,7 +115,7 @@ class App():
         total_steps=int(s.total_steps)
         progress=(step)/total_steps # s.hyper_parameters.num_epochs*20
         s.training_progress_bar.progress(progress)
-        s.progress_bar_text.markdown(f"epoch {step+1}/{total_steps}, current_loss={current_loss}, avg_loss={avg_loss}") # TODO use steps s.hyper_parameters.num_epochs
+        s.progress_bar_text.markdown(f"step {step+1}/{total_steps}, current_loss={current_loss}, avg_loss={avg_loss}") # TODO use steps s.hyper_parameters.num_epochs
         s.current_loss_data.append({"step":step, "current_loss":current_loss})    
         s.avg_loss_data.append({"step":step, "avg_loss":avg_loss})
         s.current_loss_line_chart_placeholder.line_chart(s.current_loss_data,x="step",y="current_loss")
@@ -145,6 +145,7 @@ class App():
     def draw_training_progress_widget(s):
         widget=s.body.container()
         widget.subheader("Training progress")
+        s.training_status_ph=st.empty()
         s.training_progress_bar=widget.progress(value=0,text='Step')
         s.progress_bar_text=widget.empty()
         s.current_loss_data=[{"step":None, "curret_loss":None}]
@@ -185,8 +186,16 @@ class App():
         s.hyper_parameters.hidden_layers=col2.slider(label="Hidden Layers",min_value=1,max_value=10,value=2)
         s.hyper_parameters.output_nodes=col2.slider(label="Output Nodes",min_value=1,max_value=10,value=1)   
         s.hyper_parameters.num_image_repeats=col1.slider(label="Image Repeats",value=5,min_value=1,max_value=20)          
-        s.hyper_parameters.clip_skip=col2.slider(label="Clip Skip",value=2,min_value=1,max_value=4)
-        s.hyper_parameters.optimizer_name=widget.selectbox("Optimizer", ["Adam","Adamax","AdamW","Adagrad"],index=0)
+        s.hyper_parameters.clip_skip=col2.slider(label="Clip Skip",value=2,min_value=1,max_value=4)        
+        s.hyper_parameters.optimizer_name=col1.selectbox("Optimizer", ["Adam","Adamax","AdamW","Adagrad"],index=0)
+        s.hyper_parameters.lr_scheduler=col2.selectbox("LR Scheduler", ["cosine_with_restarts"],index=0) # "cosine_with_restarts"
+        s.hyper_parameters.unet_lr=(col1.slider(label="UNET LR",min_value=1,max_value=100,value=50)/display_factor) # 0.0005
+        s.hyper_parameters.text_encoder_lr=(col2.slider(label="Text Encoder LR",min_value=1,max_value=1000,value=10)/display_factor) # 0.0001
+        s.hyper_parameters.network_dim=col1.slider(label="Network Dim",min_value=2,max_value=32,value=16,step=2) # 16
+        s.hyper_parameters.network_alpha=col2.slider(label="Network Alpha",min_value=2,max_value=32,value=8,step=2) # 8
+        s.hyper_parameters.network_module=col1.selectbox("Network Module", ["networks.lora"],index=0) # "networks.lora"
+        s.hyper_parameters.lr_warmup_steps=col2.slider(label="LR Warmup Steps",min_value=50,max_value=75,value=65) # 65 # None for Adafactor otherwise around 65        
+        s.hyper_parameters.lr_scheduler_num_cycles=col1.slider(label="LR Scheduler Cycles",min_value=1,max_value=10,value=3) # 3    
         return
     
     def draw_training_meta_data(s):
@@ -201,15 +210,25 @@ class App():
     def draw_settings_widget(s):
         s.settings=omgs.OMGeneralSettings()
         widget=s.body.expander("General Settings")
-        #project_name = "pernille_harder_211220231821"        
-        #model_file="v1-5-pruned-emaonly.safetensors" # cyberrealistic_v40.safetensors | realcartoon3d_v8.safetensors" | "realcartoonRealistic_v11.safetensors" | aZovyaPhotoreal_v2.safetensors"
-        #model_url=f"https://xyz.com/{s.model_file}"
-        #s.settings.model_file=widget.text_input("Model File", value="v1-5-pruned-emaonly.safetensors")
-        #oml.debug(f"mod_fi={s.settings.model_file}")
-        s.settings.project_name=widget.text_input("Project Name", value="albbukjor_301220230945",placeholder="Unique logical name of your project")
-        s.settings.project_dir=widget.text_input("Project Directory",value="projects",placeholder="Path to project root folder")
-        s.settings.model_cache_folder=widget.text_input("Model Cache Folder", value="D:\Apps\stable-diffusion-webui\models\Stable-diffusion")
-        s.settings.model_file=widget.text_input("Model File",value="v1-5-pruned-emaonly.safetensors")  
+        cols=widget.columns(2)
+        col1=cols[0]
+        col2=cols[1]        
+        s.settings.project_name=col1.text_input("Project Name", value="albbukjor_301220230945",placeholder="Unique logical name of your project")
+        s.settings.project_dir=col2.text_input("Project Directory",value="projects",placeholder="Path to project root folder")
+        s.settings.model_cache_folder=col1.text_input("Model Cache Folder", value="D:\Apps\stable-diffusion-webui\models\Stable-diffusion")
+        s.settings.model_file=col2.text_input("Model File",value="v1-5-pruned-emaonly.safetensors")
+        s.settings.save_every_n_epochs=col1.slider(label="save_every_n_epochs",min_value=1,max_value=10,value=1) # settings. #1
+        s.settings.save_last_n_epochs=col2.slider(label="save_last_n_epochs",min_value=1,max_value=10,value=10) # settings. #10
+        s.settings.weighted_captions=col1.checkbox(label="weighted_captions",value=False) # settings. #False
+        s.settings.seed=int(col2.text_input(label="Seed",value="42")) # settings. #42
+        s.settings.max_token_length=col1.slider(label="max_token_length",min_value=50,max_value=500,value=225,step=25) # settings. #225
+        s.settings.v2=col2.checkbox(label="Stable Diffusion v2",value=False) # settings. #False
+        s.settings.xformers=col1.checkbox(label="xformers",value=True) # settings. #True #True
+        s.settings.lowram=col2.checkbox(label="lowram",value=False) # settings. #False # False
+        s.settings.max_data_loader_n_workers=col1.slider(label="max_data_loader_n_workers",min_value=0,max_value=10,value=0) # settings. #0 #8
+        s.settings.persistent_data_loader_workers=col2.checkbox(label="persistent_data_loader_workers",value=False) # settings. #False #True        
+        s.settings.save_model_as=col1.selectbox("save_model_as", ["safetensors"],index=0) # settings. #"safetensors"
+        s.settings.cache_latents=col2.checkbox(label="cache_latents",value=True) # settings. #True 
         return
     
     def draw_template(s):
@@ -229,22 +248,30 @@ class App():
         s.hyper_parameters=s.build_hyper_parameters()
         s.draw_footer()
         s.draw_template()
-        oml.progress("training model...")
+        
         observer=omo.OMObserver(s)
         #model_callback=ommc.OMModelCallback(observer)     
         #synthetic_data_file='data/stock_prices.csv'
         #generate_synthetic_data(100, synthetic_data_file)                   
         #omt.train_model(s.hyper_parameters,observer, model_callback)
-        lora_trainer=omlt.OMLoRATrainer(observer=observer)
+        TRAINING_IN_PROGRESS:str='TRAINING_IN_PROGRESS'
+        if(TRAINING_IN_PROGRESS in st.session_state): s.training_in_progress=st.session_state[TRAINING_IN_PROGRESS]
+        else: s.training_in_progress=False
         try:
-            #lora_trainer.start_training(project_name=s.settings.project_name,project_dir="projects",batch_size=s.hyper_parameters.batch_size, 
-             #                           max_epochs=s.hyper_parameters.max_epochs,model_file=s.settings.model_file,model_cache_folder=s.settings.model_cache_folder,
-              #                          num_image_repeats=s.hyper_parameters.num_image_repeats)
-            lora_trainer.start_training(s.settings,s.hyper_parameters)
-            oml.success("model was trained!")
-            st.success("model was trained!")
+            if(s.training_in_progress==False):
+                if(st.button("Start training",disabled=s.training_in_progress)):
+                    st.session_state[TRAINING_IN_PROGRESS]=True
+                    oml.progress("training model...")
+                    lora_trainer=omlt.OMLoRATrainer(observer=observer)
+                    with st.spinner('Training LoRA...'): 
+                        lora_trainer.start_training(s.settings,s.hyper_parameters)                
+                    oml.success("model was trained!")
+                    s.training_status_ph.success("model was trained!")
+            else: oml.warn("Training already in progress!")
         except():
             st.exception()
+        finally:
+            st.session_state[TRAINING_IN_PROGRESS]=False
 
 app=App()
 app.main()

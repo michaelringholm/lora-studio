@@ -47,6 +47,8 @@ from modules.om_ext_custom_train_functions import (
     apply_debiased_estimation,
 )
 import modules.om_observer as omo
+import modules.om_hyper_params as omhp
+import modules.om_general_settings as omgs
 # endregion
 
 class NetworkTrainer:
@@ -854,7 +856,7 @@ class NetworkTrainer:
                 logs = {"avr_loss": avr_loss}  # , "lr": lr_scheduler.get_last_lr()[0]}
                 progress_bar.set_postfix(**logs)
                 #oml.debug(f"current_epoch={current_epoch.value},current_loss={current_loss},avr_loss={avr_loss}")
-                self.observer.observe(self.observer.TRAINING_STEP_EVENT, args=(current_epoch,step,current_loss,avr_loss))
+                self.observer.observe(self.observer.TRAINING_STEP_EVENT, args=(current_epoch,step,current_loss,avr_loss,global_step))
                 if args.scale_weight_norms:
                     progress_bar.set_postfix(**{**max_mean_logs, **logs})
 
@@ -1000,38 +1002,38 @@ def print_args(args):
         oml.debug(f"{argKey}={argDict[argKey]}")
     oml.debug("************* END OF ARGS **********************")
 
-def update_args(args,config_file,dataset_config_file,settings,hyper_parameters):
+def update_args(args,config_file,dataset_config_file,settings:omgs.OMGeneralSettings,hyper_parameters:omhp.OMHyperParameters):
     #s.root_dir,settings.project_name,s.model_file,s.model_cache_folder,
     platform_os = "WINDOWS" # TODO-> Do a smarter way
     args.in_json=config_file
     args.dataset_config=dataset_config_file
     # training config
-    args.unet_lr = 0.0005
-    args.text_encoder_lr = 0.0001
-    args.network_dim = 16
-    args.network_alpha = 8
-    args.network_module = "networks.lora"
+    args.unet_lr = hyper_parameters.unet_lr #0.0005
+    args.text_encoder_lr = hyper_parameters.text_encoder_lr #0.0001
+    args.network_dim = hyper_parameters.network_dim #16
+    args.network_alpha = hyper_parameters.network_alpha #8
+    args.network_module = hyper_parameters.network_module #"networks.lora"
     # [optimizer_arguments]
     args.learning_rate = hyper_parameters.learning_rate #0.004 #0.001 (NOT BAD) # 0.000025 # MODIFIED 0.0005 # RECOMMEND BY HF = 0.000001
     args.optimizer_type = hyper_parameters.optimizer_name #"Adam" #"SGD" #"Adafactor" # MODIFIED AdamW8bit | Adafactor (TRY)
-    args.lr_warmup_steps = 65 # None for Adafactor otherwise around 65
+    args.lr_warmup_steps = hyper_parameters.lr_warmup_steps #65 # None for Adafactor otherwise around 65
     args.max_train_epochs = hyper_parameters.max_epochs # 8 # MODIFIED 10
     args.train_batch_size = hyper_parameters.batch_size # 2 # MODIFIED 2
     args.clip_skip = hyper_parameters.clip_skip # 2 # MODIFIED 2
     args.caption_extension=".txt"
-    args.lr_scheduler = "cosine_with_restarts"
-    args.lr_scheduler_num_cycles = 3    
+    args.lr_scheduler = hyper_parameters.lr_scheduler #"cosine_with_restarts"
+    args.lr_scheduler_num_cycles = hyper_parameters.lr_scheduler_num_cycles #3    
     # [training_arguments]
-    args.save_every_n_epochs = 1
-    args.save_last_n_epochs = 10
+    args.save_every_n_epochs = settings.save_every_n_epochs #1
+    args.save_last_n_epochs = settings.save_last_n_epochs #10
     args.min_snr_gamma = 5.0
-    args.weighted_captions = False
-    args.seed = 42
-    args.max_token_length = 225
-    args.xformers = True #True
-    args.lowram = False # False
-    args.max_data_loader_n_workers = 0 #8
-    args.persistent_data_loader_workers = False #True
+    args.weighted_captions = settings.weighted_captions #False
+    args.seed = settings.seed #42
+    args.max_token_length = settings.max_token_length #225
+    args.xformers = settings.xformers #True #True
+    args.lowram = settings.lowram #False # False
+    args.max_data_loader_n_workers = settings.max_data_loader_n_workers #0 #8
+    args.persistent_data_loader_workers = settings.persistent_data_loader_workers #False #True
     if platform_os == "WINDOWS":
         args.max_data_loader_n_workers = 0 #8
         args.persistent_data_loader_workers = False #True
@@ -1044,13 +1046,13 @@ def update_args(args,config_file,dataset_config_file,settings,hyper_parameters):
     # [model_arguments]
     args.pretrained_model_name_or_path = f"{settings.model_cache_folder}/{settings.model_file}"
     oml.debug(f"training with pretrained_model_name_or_path={args.pretrained_model_name_or_path}")
-    args.v2 = False
+    args.v2 = settings.v2 #False
     # [saving_arguments]
-    args.save_model_as = "safetensors"
+    args.save_model_as = settings.save_model_as #"safetensors"
     # [dreambooth_arguments]
     args.prior_loss_weight = 1.0
     # [dataset_arguments]
-    args.cache_latents = True    
+    args.cache_latents = settings.cache_latents #True    
     # captions
     #args.recursive=False
     #args.train_data_dir=f"{root_dir}/{project_name}"
