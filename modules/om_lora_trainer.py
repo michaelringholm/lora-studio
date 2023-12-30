@@ -7,10 +7,11 @@ import modules.om_logging as oml
 from safetensors.torch import load_file as torch_load_safetensors
 from torch import load as torch_load_ckpt
 import modules.om_train_network as om_train_network
-
+import modules.om_observer as omo
 
 class OMLoRATrainer():
-  def __init__(s):
+  def __init__(s,observer:omo.OMObserver):
+    s.observer=observer
     return
   
   def configure_globals(s):
@@ -50,7 +51,7 @@ class OMLoRATrainer():
     s.keep_tokens = int(activation_tags)
     #@markdown ### ▶️ Steps <p>
     #@markdown Your images will repeat this number of times during training. I recommend that your images multiplied by their repeats is between 200 and 400.
-    s.num_image_repeats = 10 #@param {type:"number"}
+    #s.num_image_repeats = 10 #@param {type:"number"}
     #@markdown Choose how long you want to train for. A good starting point is around 10 epochs or around 2000 steps.<p>
     #@markdown One epoch is a number of steps equal to: your number of images multiplied by their repeats, divided by batch size. <p>
     preferred_unit = "Epochs" #@param ["Epochs", "Steps"]
@@ -188,6 +189,7 @@ class OMLoRATrainer():
     steps_per_epoch = pre_steps_per_epoch/s.batch_size
     total_steps = int(s.max_epochs*steps_per_epoch)
     estimated_epochs = int(total_steps/steps_per_epoch)
+    s.observer.observe(s.observer.TRANING_START_VALIDATE_EVENT, args=(pre_steps_per_epoch,steps_per_epoch,total_steps,estimated_epochs))
     #lr_warmup_steps = int(total_steps*lr_warmup_ratio)
 
     for folder, (img, rep) in images_repeats.items():
@@ -200,7 +202,7 @@ class OMLoRATrainer():
     print(f"🔮 There will be {total_steps} steps, divided into {estimated_epochs} epochs and then some.")
 
     if total_steps > 10000:
-      print("💥 Error: Your total steps are too high. You probably made a mistake. Aborting...")
+      raise Exception("💥 Error: Your total steps are too high. You probably made a mistake. Aborting...")
       return
 
     if s.adjust_tags:
@@ -235,7 +237,7 @@ class OMLoRATrainer():
   def create_config(s):
     if s.override_config_file:
       config_file = s.override_config_file
-      oml.warn(f"\n⭕ Using custom config file {config_file}")
+      oml.warn(f"⭕ Using custom config file {config_file}")
     else:
       oml.progress("Creating new config dict!")
       config_dict = {
@@ -450,20 +452,22 @@ class OMLoRATrainer():
       os.makedirs(dir, exist_ok=True)
     oml.success(f"Folder structure created.")
 
-  def start_training(s,project_name:str,project_dir:str,batch_size:int,max_epochs:int,model_file:str,model_cache_folder:str):
-    s.project_name=project_name
-    s.project_dir=project_dir
-    s.batch_size=batch_size
-    s.max_epochs=max_epochs
-    s.model_file=model_file
-    s.model_cache_folder=model_cache_folder #model_cache_folder=f"{s.root_dir}/model_cache"
+  #def start_training(s,project_name:str,project_dir:str,batch_size:int,max_epochs:int,model_file:str,model_cache_folder:str,num_image_repeats:int=10):
+  def start_training(s,settings,hyper_parameters):
+    s.project_name=settings.project_name
+    s.project_dir=settings.project_dir
+    s.batch_size=hyper_parameters.batch_size
+    s.max_epochs=hyper_parameters.max_epochs
+    s.model_file=settings.model_file
+    s.num_image_repeats=hyper_parameters.num_image_repeats
+    s.model_cache_folder=settings.model_cache_folder #model_cache_folder=f"{s.root_dir}/model_cache"
     s.root_dir=os.path.join(s.project_dir,s.project_name)
     if(s.project_name==None or s.project_name==''): raise Exception("Project name must be defined")
     if(s.project_name==None or s.project_dir==''): raise Exception("Project dir must be defined")
     
     s.configure_globals()
     s.raw_setup()
-    oml.success(f"Starting LoRA project [{project_name}]")
+    oml.success(f"Starting LoRA project [{settings.project_name}]")
     s.create_folder_structure()
     if not s.validate_dataset(): return
     #if old_model_url != model_url or not model_file or not os.path.exists(model_file):
@@ -472,7 +476,7 @@ class OMLoRATrainer():
     print("\n⭐ Starting trainer...\n")
     #os.chdir(s.repo_dir)
     # https://huggingface.co/docs/accelerate/basic_tutorials/launch    
-    om_train_network.train_network_main(s.root_dir,project_name,s.model_file,s.model_cache_folder,s.dataset_config_file,s.config_file,s.accelerate_config_file,num_cpu_threads_per_process=1)
+    om_train_network.train_network_main(observer=s.observer,settings=settings,hyper_parameters=hyper_parameters,dataset_config_file=s.dataset_config_file,config_file=s.config_file,accelerate_config_file=s.accelerate_config_file,num_cpu_threads_per_process=1)
     oml.success("You can now download your Lora!")
     #if not get_ipython().__dict__['user_ns']['_exit_code']:
     #display(Markdown("### ✅ Done! [Go download your Lora from Google Drive](https://drive.google.com/drive/my-drive)\n"

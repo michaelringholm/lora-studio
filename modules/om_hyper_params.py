@@ -3,7 +3,8 @@
 class OMHyperParameters():
     def __init__(s):
         s.batch_size:int # use 2^
-        s.num_epochs:int=20 # good starting point
+        s.max_epochs:int=20 # good starting point
+        s.num_image_repeats:int=10 # 10 is normal
         s.first_layer_neurons:int # half of features
         s.hidden_layers:int=2 # good starting point
         s.output_nodes:int

@@ -1,3 +1,4 @@
+# region imports
 import importlib
 import argparse
 import gc
@@ -13,7 +14,6 @@ import modules.om_logging as oml
 from tqdm import tqdm
 import torch
 import GPUtil    
-
 try:
     import intel_extension_for_pytorch as ipex
 
@@ -46,26 +46,24 @@ from modules.om_ext_custom_train_functions import (
     add_v_prediction_like_loss,
     apply_debiased_estimation,
 )
-
+import modules.om_observer as omo
+# endregion
 
 class NetworkTrainer:
-    def __init__(self):
+    def __init__(self,observer:omo.OMObserver):
         self.vae_scale_factor = 0.18215
         self.is_sdxl = False
+        self.observer=observer
 
     # TODO Generalize with other scripts.
-    def generate_step_logs(
-        self, args: argparse.Namespace, current_loss, avr_loss, lr_scheduler, keys_scaled=None, mean_norm=None, maximum_norm=None
-    ):
+    def generate_step_logs(self, args: argparse.Namespace, current_loss, avr_loss, lr_scheduler, keys_scaled=None, mean_norm=None, maximum_norm=None):
         logs = {"loss/current": current_loss, "loss/average": avr_loss}
-
         if keys_scaled is not None:
             logs["max_norm/keys_scaled"] = keys_scaled
             logs["max_norm/average_key_norm"] = mean_norm
             logs["max_norm/max_key_norm"] = maximum_norm
 
         lrs = lr_scheduler.get_last_lr()
-
         if args.network_train_text_encoder_only or len(lrs) <= 2:  # not block lr (or single block)
             if args.network_train_unet_only:
                 logs["lr/unet"] = float(lrs[0])
@@ -75,12 +73,8 @@ class NetworkTrainer:
                 logs["lr/textencoder"] = float(lrs[0])
                 logs["lr/unet"] = float(lrs[-1])  # may be same to textencoder
 
-            if (
-                args.optimizer_type.lower().startswith("DAdapt".lower()) or args.optimizer_type.lower() == "Prodigy".lower()
-            ):  # tracking d*lr value of unet.
-                logs["lr/d*lr"] = (
-                    lr_scheduler.optimizers[-1].param_groups[0]["d"] * lr_scheduler.optimizers[-1].param_groups[0]["lr"]
-                )
+            if (args.optimizer_type.lower().startswith("DAdapt".lower()) or args.optimizer_type.lower() == "Prodigy".lower()):  # tracking d*lr value of unet.
+                logs["lr/d*lr"] = (lr_scheduler.optimizers[-1].param_groups[0]["d"] * lr_scheduler.optimizers[-1].param_groups[0]["lr"])
         else:
             idx = 0
             if not args.network_train_unet_only:
@@ -90,10 +84,7 @@ class NetworkTrainer:
             for i in range(idx, len(lrs)):
                 logs[f"lr/group{i}"] = float(lrs[i])
                 if args.optimizer_type.lower().startswith("DAdapt".lower()) or args.optimizer_type.lower() == "Prodigy".lower():
-                    logs[f"lr/d*lr/group{i}"] = (
-                        lr_scheduler.optimizers[-1].param_groups[i]["d"] * lr_scheduler.optimizers[-1].param_groups[i]["lr"]
-                    )
-
+                    logs[f"lr/d*lr/group{i}"] = ( lr_scheduler.optimizers[-1].param_groups[i]["d"] * lr_scheduler.optimizers[-1].param_groups[i]["lr"]  )
         return logs
 
     def assert_extra_args(self, args, train_dataset_group):
@@ -151,7 +142,7 @@ class NetworkTrainer:
         tokenizers = tokenizer if isinstance(tokenizer, list) else [tokenizer]
 
         if args.dataset_class is None:
-            blueprint_generator = BlueprintGenerator(ConfigSanitizer(True, True, False, True))
+            blueprint_generator = BlueprintGenerator(ConfigSanitizer(True, True, False, True),observer=self.observer)
             if use_user_config:
                 oml.info(f"Loading dataset config from {args.dataset_config}")
                 user_config = config_util.load_user_config(args.dataset_config)
@@ -191,33 +182,21 @@ class NetworkTrainer:
 
             blueprint = blueprint_generator.generate(user_config, args, tokenizer=tokenizer)
             print(f"train_network.blueprint.dataset_group={blueprint.dataset_group}")
-            train_dataset_group = config_util.generate_dataset_group_by_blueprint(blueprint.dataset_group)
-        else:
-            # use arbitrary dataset class
-            train_dataset_group = om_ext_train_util.load_arbitrary_dataset(args, tokenizer)
+            train_dataset_group = config_util.generate_dataset_group_by_blueprint(blueprint.dataset_group,self.observer)
+        else: train_dataset_group = om_ext_train_util.load_arbitrary_dataset(args, tokenizer) # use arbitrary dataset class
 
         current_epoch = Value("i", 0)
         current_step = Value("i", 0)
         ds_for_collator = train_dataset_group if args.max_data_loader_n_workers == 0 else None
         collator = om_ext_train_util.collator_class(current_epoch, current_step, ds_for_collator)
-
         if args.debug_dataset:
             om_ext_train_util.debug_dataset(train_dataset_group)
             return
         if len(train_dataset_group) == 0:
-            print(
-                "No data found. Please verify arguments (train_data_dir must be the parent of folders with images) / 画像がありません。引数指定を確認してください（train_data_dirには画像があるフォルダではなく、画像があるフォルダの親フォルダを指定する必要があります）"
-            )
+            print("No data found. Please verify arguments (train_data_dir must be the parent of folders with images)")
             return
-
-        if cache_latents:
-            assert (
-                train_dataset_group.is_latent_cacheable()
-            ), "when caching latents, either color_aug or random_crop cannot be used / latentをキャッシュするときはcolor_augとrandom_cropは使えません"
-
+        if cache_latents: assert (train_dataset_group.is_latent_cacheable()), "when caching latents, either color_aug or random_crop cannot be used / latentをキャッシュするときはcolor_augとrandom_cropは使えません"
         self.assert_extra_args(args, train_dataset_group)
-
-        # acceleratorを準備する
         print("preparing accelerator")
         oml.debug("train() - step2")
         accelerator = om_ext_train_util.prepare_accelerator(args)
@@ -697,6 +676,7 @@ class NetworkTrainer:
             if key in metadata:
                 minimum_metadata[key] = metadata[key]
 
+        # TODO Observer
         progress_bar = tqdm(range(args.max_train_steps), smoothing=0, disable=not accelerator.is_local_main_process, desc="steps")
         global_step = 0
 
@@ -715,6 +695,7 @@ class NetworkTrainer:
                 "network_train" if args.log_tracker_name is None else args.log_tracker_name, init_kwargs=init_kwargs
             )
 
+        # TODO Observer
         loss_recorder = om_ext_train_util.LossRecorder()
         del train_dataset_group
 
@@ -872,7 +853,8 @@ class NetworkTrainer:
                 avr_loss: float = loss_recorder.moving_average
                 logs = {"avr_loss": avr_loss}  # , "lr": lr_scheduler.get_last_lr()[0]}
                 progress_bar.set_postfix(**logs)
-                #oml.debug("train() - step9b")
+                #oml.debug(f"current_epoch={current_epoch.value},current_loss={current_loss},avr_loss={avr_loss}")
+                self.observer.observe(self.observer.TRAINING_STEP_EVENT, args=(current_epoch,step,current_loss,avr_loss))
                 if args.scale_weight_norms:
                     progress_bar.set_postfix(**{**max_mean_logs, **logs})
 
@@ -926,16 +908,15 @@ class NetworkTrainer:
             oml.info("model saved.")
 
 
+# region global methods
 def setup_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-
     om_ext_train_util.add_sd_models_arguments(parser)
     om_ext_train_util.add_dataset_arguments(parser, True, True, True)
     om_ext_train_util.add_training_arguments(parser, True)
     om_ext_train_util.add_optimizer_arguments(parser)
     config_util.add_config_arguments(parser)
     custom_train_functions.add_custom_train_arguments(parser)
-
     parser.add_argument("--no_metadata", action="store_true", help="do not save metadata in output model / メタデータを出力先モデルに保存しない")
     parser.add_argument(
         "--save_model_as",
@@ -944,15 +925,11 @@ def setup_parser() -> argparse.ArgumentParser:
         choices=[None, "ckpt", "pt", "safetensors"],
         help="format to save the model (default is .safetensors) / モデル保存時の形式（デフォルトはsafetensors）",
     )
-
     parser.add_argument("--unet_lr", type=float, default=None, help="learning rate for U-Net / U-Netの学習率")
     parser.add_argument("--text_encoder_lr", type=float, default=None, help="learning rate for Text Encoder / Text Encoderの学習率")
-
     parser.add_argument("--network_weights", type=str, default=None, help="pretrained weights for network / 学習するネットワークの初期重み")
     parser.add_argument("--network_module", type=str, default=None, help="network module to train / 学習対象のネットワークのモジュール")
-    parser.add_argument(
-        "--network_dim", type=int, default=None, help="network dimensions (depends on each network) / モジュールの次元数（ネットワークにより定義は異なります）"
-    )
+    parser.add_argument("--network_dim", type=int, default=None, help="network dimensions (depends on each network) / モジュールの次元数（ネットワークにより定義は異なります）")
     parser.add_argument(
         "--network_alpha",
         type=float,
@@ -1016,18 +993,16 @@ def check_gpu():
         oml.warn(f"No GPU found! Using CPU instead.")
     oml.debug(f"PyTorch version: {torch.__version__}")
     
-def train_network_main(root_dir,project_name,model_file,model_folder,dataset_config_file, config_file, accelerate_config_file, num_cpu_threads_per_process):
-    platform_os = "WINDOWS" # TODO-> Do a smarter way
-    check_gpu()
-    parser = setup_parser()
-    args = parser.parse_args()    
-    argDict=vars(args)
+def print_args(args):
+    argDict=vars(args)   
     oml.debug("************* START OF ARGS **********************")
     for argKey in argDict:
         oml.debug(f"{argKey}={argDict[argKey]}")
     oml.debug("************* END OF ARGS **********************")
-    args = om_ext_train_util.read_config_from_file(args, parser)
-    
+
+def update_args(args,config_file,dataset_config_file,settings,hyper_parameters):
+    #s.root_dir,settings.project_name,s.model_file,s.model_cache_folder,
+    platform_os = "WINDOWS" # TODO-> Do a smarter way
     args.in_json=config_file
     args.dataset_config=dataset_config_file
     # training config
@@ -1037,14 +1012,13 @@ def train_network_main(root_dir,project_name,model_file,model_folder,dataset_con
     args.network_alpha = 8
     args.network_module = "networks.lora"
     # [optimizer_arguments]
-    args.learning_rate = 0.004 #0.001 (NOT BAD) # 0.000025 # MODIFIED 0.0005 # RECOMMEND BY HF = 0.000001
-    args.optimizer_type = "Adam" #"SGD" #"Adafactor" # MODIFIED AdamW8bit | Adafactor (TRY)
+    args.learning_rate = hyper_parameters.learning_rate #0.004 #0.001 (NOT BAD) # 0.000025 # MODIFIED 0.0005 # RECOMMEND BY HF = 0.000001
+    args.optimizer_type = hyper_parameters.optimizer_name #"Adam" #"SGD" #"Adafactor" # MODIFIED AdamW8bit | Adafactor (TRY)
     args.lr_warmup_steps = 65 # None for Adafactor otherwise around 65
-    args.max_train_epochs = 8 # MODIFIED 10
-    args.train_batch_size = 2 # MODIFIED 2
-    args.clip_skip = 2 # MODIFIED 2
+    args.max_train_epochs = hyper_parameters.max_epochs # 8 # MODIFIED 10
+    args.train_batch_size = hyper_parameters.batch_size # 2 # MODIFIED 2
+    args.clip_skip = hyper_parameters.clip_skip # 2 # MODIFIED 2
     args.caption_extension=".txt"
-    
     args.lr_scheduler = "cosine_with_restarts"
     args.lr_scheduler_num_cycles = 3    
     # [training_arguments]
@@ -1063,12 +1037,12 @@ def train_network_main(root_dir,project_name,model_file,model_folder,dataset_con
         args.persistent_data_loader_workers = False #True
     args.save_precision = "fp16"
     args.mixed_precision = "fp16"
-    args.output_dir = f"{root_dir}/{project_name}/output"
-    args.logging_dir = f"{root_dir}/_logs"
-    args.output_name = project_name
-    args.log_prefix = project_name
+    args.output_dir = f"{settings.project_dir}/{settings.project_name}/output"
+    args.logging_dir = f"{settings.project_dir}/_logs"
+    args.output_name = settings.project_name
+    args.log_prefix = settings.project_name
     # [model_arguments]
-    args.pretrained_model_name_or_path = f"{model_folder}/{model_file}"
+    args.pretrained_model_name_or_path = f"{settings.model_cache_folder}/{settings.model_file}"
     oml.debug(f"training with pretrained_model_name_or_path={args.pretrained_model_name_or_path}")
     args.v2 = False
     # [saving_arguments]
@@ -1077,14 +1051,20 @@ def train_network_main(root_dir,project_name,model_file,model_folder,dataset_con
     args.prior_loss_weight = 1.0
     # [dataset_arguments]
     args.cache_latents = True    
-
     # captions
     #args.recursive=False
     #args.train_data_dir=f"{root_dir}/{project_name}"
-    #from finetune.make_captions import make_captions
-    #make_captions(args)
-    #return
-    # make captions should be run from within the finetune folder as it is right now
-    # end captions
-    trainer = NetworkTrainer()    
+
+def train_network_main(observer:omo.OMObserver,settings,hyper_parameters,dataset_config_file, config_file, accelerate_config_file, num_cpu_threads_per_process):    
+    check_gpu()
+    parser = setup_parser()
+    args = parser.parse_args()         
+    args = om_ext_train_util.read_config_from_file(args, parser)
+    #set_default_args(args=args,config_file=config_file,dataset_config_file=dataset_config_file,root_dir=root_dir,project_name=project_name,model_file=model_file,model_folder=model_folder)
+    update_args(args=args,config_file=config_file,dataset_config_file=dataset_config_file,settings=settings,hyper_parameters=hyper_parameters)
+
+    #print_args(args)
+    #make_captions(args) # make captions should be run from within the finetune folder as it is right now
+    trainer = NetworkTrainer(observer)    
     trainer.train(args)
+# endregion

@@ -39,6 +39,7 @@ from .om_ext_train_util import (
   ControlNetDataset,
   DatasetGroup,
 )
+import modules.om_observer as omo
 
 
 def add_config_arguments(parser: argparse.ArgumentParser):
@@ -347,7 +348,8 @@ class BlueprintGenerator:
   BLUEPRINT_PARAM_NAME_TO_CONFIG_OPTNAME = {
   }
 
-  def __init__(self, sanitizer: ConfigSanitizer):
+  def __init__(self, sanitizer: ConfigSanitizer,observer:omo.OMObserver):
+    self.observer=observer
     self.sanitizer = sanitizer
 
   # runtime_params is for parameters which is only configurable on runtime, such as tokenizer
@@ -413,9 +415,8 @@ class BlueprintGenerator:
     return default_value
 
 
-def generate_dataset_group_by_blueprint(dataset_group_blueprint: DatasetGroupBlueprint):
+def generate_dataset_group_by_blueprint(dataset_group_blueprint:DatasetGroupBlueprint,observer:omo.OMObserver):
   datasets: List[Union[DreamBoothDataset, FineTuningDataset, ControlNetDataset]] = []
-
   for dataset_blueprint in dataset_group_blueprint.datasets:
     if dataset_blueprint.is_controlnet:
       subset_klass = ControlNetSubset
@@ -428,7 +429,7 @@ def generate_dataset_group_by_blueprint(dataset_group_blueprint: DatasetGroupBlu
       dataset_klass = FineTuningDataset
 
     subsets = [subset_klass(**asdict(subset_blueprint.params)) for subset_blueprint in dataset_blueprint.subsets]
-    dataset = dataset_klass(subsets=subsets, **asdict(dataset_blueprint.params))
+    dataset = dataset_klass(subsets=subsets, **asdict(dataset_blueprint.params),observer=observer)
     datasets.append(dataset)
 
   # print info

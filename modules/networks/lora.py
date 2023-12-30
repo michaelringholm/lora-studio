@@ -1088,7 +1088,7 @@ class LoRANetwork(torch.nn.Module):
 
         if os.path.splitext(file)[1] == ".safetensors":
             from safetensors.torch import save_file
-            from library import train_util
+            from modules import om_ext_train_util as train_util # library import train_util
 
             # Precalculate model hashes to save time on indexing
             if metadata is None:

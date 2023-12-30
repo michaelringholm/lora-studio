@@ -68,6 +68,7 @@ import modules.om_ext_sai_model_spec as sai_model_spec
 # from library.attention_processors import FlashAttnProcessor
 # from library.hypernetwork import replace_attentions_for_hypernetwork
 from modules.om_ext_original_unet import UNet2DConditionModel
+import modules.om_observer as omo
 
 # Tokenizer: checkpointから読み込むのではなくあらかじめ提供されているものを使う
 TOKENIZER_PATH = "openai/clip-vit-large-patch14"
@@ -543,9 +544,10 @@ class BaseDataset(torch.utils.data.Dataset):
         max_token_length: int,
         resolution: Optional[Tuple[int, int]],
         debug_dataset: bool,
+        observer: omo.OMObserver
     ) -> None:
         super().__init__()
-
+        self.observer=observer
         self.tokenizers = tokenizer if isinstance(tokenizer, list) else [tokenizer]
 
         self.max_token_length = max_token_length
@@ -754,10 +756,8 @@ class BaseDataset(torch.utils.data.Dataset):
             if info.image_size is None:
                 info.image_size = self.get_image_size(info.absolute_path)
 
-        if self.enable_bucket:
-            print("make buckets")
-        else:
-            print("prepare dataset")
+        if self.enable_bucket: print("make buckets")
+        else: print("prepare dataset")
 
         # bucketを作成し、画像をbucketに振り分ける
         if self.enable_bucket:
@@ -801,7 +801,7 @@ class BaseDataset(torch.utils.data.Dataset):
         # bucket情報を表示、格納する
         if self.enable_bucket:
             self.bucket_info = {"buckets": {}}
-            print("number of images (including repeats) / 各bucketの画像枚数（繰り返し回数を含む）")
+            #self.observer.observe("number of images (including repeats)")
             for i, (reso, bucket) in enumerate(zip(self.bucket_manager.resos, self.bucket_manager.buckets)):
                 count = len(bucket)
                 if count > 0:
@@ -1324,9 +1324,10 @@ class DreamBoothDataset(BaseDataset):
         bucket_no_upscale: bool,
         prior_loss_weight: float,
         debug_dataset,
+        observer:omo.OMObserver
     ) -> None:
-        super().__init__(tokenizer, max_token_length, resolution, debug_dataset)
-
+        super().__init__(tokenizer, max_token_length, resolution, debug_dataset,observer=observer)
+        self.observer=observer
         assert resolution is not None, f"resolution is required / resolution（解像度）指定は必須です"
 
         self.batch_size = batch_size
