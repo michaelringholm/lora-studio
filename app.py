@@ -6,6 +6,7 @@ import random as rnd
 import modules.om_lora_trainer as omlt
 import json
 import traceback as trc
+import modules.captions.make_captions as mkcap
 import modules.om_logging as oml
 import modules.om_observer as omo
 import modules.om_hyper_params as omhp
@@ -111,21 +112,27 @@ class App():
         hyper_parameters.num_epochs=30
         return hyper_parameters
     
-    def update_training_progress(s,epoch,step,current_loss,avg_loss):
+    def update_training_progress(s,epoch,step,current_loss,avg_loss,global_step):
         total_steps=int(s.total_steps)
-        progress=(step)/total_steps # s.hyper_parameters.num_epochs*20
+        progress=(global_step)/total_steps # s.hyper_parameters.num_epochs*20
         s.training_progress_bar.progress(progress)
-        s.progress_bar_text.markdown(f"step {step+1}/{total_steps}, current_loss={current_loss}, avg_loss={avg_loss}") # TODO use steps s.hyper_parameters.num_epochs
-        s.current_loss_data.append({"step":step, "current_loss":current_loss})    
-        s.avg_loss_data.append({"step":step, "avg_loss":avg_loss})
+        s.progress_bar_text.markdown(f"👟step {global_step}/{total_steps}, 📈current_loss={current_loss}, 📈avg_loss={avg_loss}") # TODO use steps s.hyper_parameters.num_epochs
+        s.current_loss_data.append({"step":global_step, "current_loss":current_loss})    
+        s.avg_loss_data.append({"step":global_step, "avg_loss":avg_loss})
         s.current_loss_line_chart_placeholder.line_chart(s.current_loss_data,x="step",y="current_loss")
         s.avg_loss_line_chart_placeholder.line_chart(s.avg_loss_data,x="step",y="avg_loss")
         return
     
     def update_training_start_meta_data(s,pre_steps_per_epoch,steps_per_epoch,total_steps,estimated_epochs):
-        s.total_steps=s.total_steps_placeholder.text_input("Total Steps",value=total_steps)
-        s.estimated_epochs_placeholder.text_input("Estimated Epocs",value=estimated_epochs)
+        s.total_steps=s.total_steps_placeholder.text_input("Total Steps 👟",value=total_steps)
+        s.estimated_epochs_placeholder.text_input("Estimated Epocs 📆",value=estimated_epochs)
         return    
+    
+    def update_cuda_info(s,gpu,cuda_installed):
+        s.env_widget.markdown(f"🖥️ {gpu.name}")
+        cuda_installed_symbol='✅' if cuda_installed else '🚫'
+        s.env_widget.markdown(f"📦CUDA {cuda_installed_symbol}")
+        return
     
     def update_training_result(s,loss,val_loss):
         #s.training_result_widget.text(f"Loss={loss}, Val_Loss={val_loss}")
@@ -174,23 +181,23 @@ class App():
         return
     
     def draw_hyper_parameter_widget(s):
-        widget=s.body.expander("Hyper Parameters")
+        widget=s.body.expander("Hyper Parameters 🎛️")
         cols=widget.columns(2)
         col1=cols[0]
         col2=cols[1]
-        s.hyper_parameters.max_epochs=col1.slider(label="Epochs",min_value=1,max_value=200,value=1)
-        s.hyper_parameters.batch_size=col1.slider(label="Batch Size",min_value=1,max_value=128,value=1)
+        s.hyper_parameters.max_epochs=col1.slider(label="Epochs",min_value=1,max_value=40,value=1)
+        s.hyper_parameters.batch_size=col1.slider(label="Batch Size",min_value=1,max_value=128,value=2)
         display_factor=10000
-        s.hyper_parameters.learning_rate=(col1.slider(label="Learning Rate",min_value=1,max_value=100,step=5,value=10)/display_factor)
+        s.hyper_parameters.learning_rate=(col1.slider(label="🏎️Learning Rate",min_value=1,max_value=100,step=10,value=int(4e-3*display_factor))/display_factor)
         s.hyper_parameters.first_layer_neurons=col2.slider(label="First Layer Neurons",min_value=1,max_value=1000,value=30)
         s.hyper_parameters.hidden_layers=col2.slider(label="Hidden Layers",min_value=1,max_value=10,value=2)
         s.hyper_parameters.output_nodes=col2.slider(label="Output Nodes",min_value=1,max_value=10,value=1)   
         s.hyper_parameters.num_image_repeats=col1.slider(label="Image Repeats",value=5,min_value=1,max_value=20)          
         s.hyper_parameters.clip_skip=col2.slider(label="Clip Skip",value=2,min_value=1,max_value=4)        
-        s.hyper_parameters.optimizer_name=col1.selectbox("Optimizer", ["Adam","Adamax","AdamW","Adagrad"],index=0)
+        s.hyper_parameters.optimizer_name=col1.selectbox("Optimizer", ["Adam","AdamW8bit","Adamax","AdamW","Adagrad"],index=0)
         s.hyper_parameters.lr_scheduler=col2.selectbox("LR Scheduler", ["cosine_with_restarts"],index=0) # "cosine_with_restarts"
-        s.hyper_parameters.unet_lr=(col1.slider(label="UNET LR",min_value=1,max_value=100,value=50)/display_factor) # 0.0005
-        s.hyper_parameters.text_encoder_lr=(col2.slider(label="Text Encoder LR",min_value=1,max_value=1000,value=10)/display_factor) # 0.0001
+        s.hyper_parameters.unet_lr=(col1.slider(label="UNET LR",min_value=1,max_value=100,value=int(5e-4*display_factor))/display_factor) # 0.0005
+        s.hyper_parameters.text_encoder_lr=(col2.slider(label="Text Encoder LR",min_value=1,max_value=1000,value=int(1e-4*display_factor))/display_factor) # 0.0001
         s.hyper_parameters.network_dim=col1.slider(label="Network Dim",min_value=2,max_value=32,value=16,step=2) # 16
         s.hyper_parameters.network_alpha=col2.slider(label="Network Alpha",min_value=2,max_value=32,value=8,step=2) # 8
         s.hyper_parameters.network_module=col1.selectbox("Network Module", ["networks.lora"],index=0) # "networks.lora"
@@ -207,34 +214,48 @@ class App():
         s.estimated_epochs_placeholder=col2.empty()
         return
 
+    def get_cached_models(s):
+        cached_model_files=[]
+        ext = '.safetensors'
+        for file in os.listdir(s.settings.model_cache_folder):
+            if file.endswith(ext):
+                cached_model_files.append(file)
+        return cached_model_files
+    
     def draw_settings_widget(s):
         s.settings=omgs.OMGeneralSettings()
-        widget=s.body.expander("General Settings")
+        widget=s.body.expander("General Settings ⚙️")
         cols=widget.columns(2)
         col1=cols[0]
         col2=cols[1]        
-        s.settings.project_name=col1.text_input("Project Name", value="albbukjor_301220230945",placeholder="Unique logical name of your project")
-        s.settings.project_dir=col2.text_input("Project Directory",value="projects",placeholder="Path to project root folder")
-        s.settings.model_cache_folder=col1.text_input("Model Cache Folder", value="D:\Apps\stable-diffusion-webui\models\Stable-diffusion")
-        s.settings.model_file=col2.text_input("Model File",value="v1-5-pruned-emaonly.safetensors")
+        s.settings.project_name=col1.text_input("Project Name", value="bellak_050120240951",placeholder="Unique logical name of your project")
+        s.settings.project_dir=col2.text_input("Project Directory 📁",value="projects",placeholder="Path to project root folder")
+        s.settings.model_cache_folder=col1.text_input("Model Cache Folder 📁", value="D:\Apps\stable-diffusion-webui\models\Stable-diffusion")
+        s.settings.model_file=col2.selectbox("Model File", s.get_cached_models()) #text_input("Model File",value="v1-5-pruned-emaonly.safetensors")
         s.settings.save_every_n_epochs=col1.slider(label="save_every_n_epochs",min_value=1,max_value=10,value=1) # settings. #1
         s.settings.save_last_n_epochs=col2.slider(label="save_last_n_epochs",min_value=1,max_value=10,value=10) # settings. #10
         s.settings.weighted_captions=col1.checkbox(label="weighted_captions",value=False) # settings. #False
         s.settings.seed=int(col2.text_input(label="Seed",value="42")) # settings. #42
         s.settings.max_token_length=col1.slider(label="max_token_length",min_value=50,max_value=500,value=225,step=25) # settings. #225
         s.settings.v2=col2.checkbox(label="Stable Diffusion v2",value=False) # settings. #False
-        s.settings.xformers=col1.checkbox(label="xformers",value=True) # settings. #True #True
-        s.settings.lowram=col2.checkbox(label="lowram",value=False) # settings. #False # False
+        s.settings.xformers=col1.checkbox(label="Use xformers",value=True) # settings. #True #True
+        s.settings.lowram=col2.checkbox(label="Low RAM",value=False) # settings. #False # False
         s.settings.max_data_loader_n_workers=col1.slider(label="max_data_loader_n_workers",min_value=0,max_value=10,value=0) # settings. #0 #8
         s.settings.persistent_data_loader_workers=col2.checkbox(label="persistent_data_loader_workers",value=False) # settings. #False #True        
-        s.settings.save_model_as=col1.selectbox("save_model_as", ["safetensors"],index=0) # settings. #"safetensors"
-        s.settings.cache_latents=col2.checkbox(label="cache_latents",value=True) # settings. #True 
+        s.settings.save_model_as=col1.selectbox("Save model as", ["safetensors"],index=0) # settings. #"safetensors"
+        s.settings.cache_latents=col2.checkbox(label="Cache Latents",value=True) # settings. #True 
+        s.settings.make_captions=col1.checkbox(label="Make Captions",value=False) # settings. #True 
+        return
+    
+    def draw_environment_widget(s):
+        s.env_widget=s.body.expander("Environment 🌳")
         return
     
     def draw_template(s):
         s.body=st.container()
         s.draw_hyper_parameter_widget()
         s.draw_settings_widget()
+        s.draw_environment_widget()
         #s.draw_input_data_widget()
         s.draw_training_progress_widget()
         s.draw_training_meta_data()
@@ -264,6 +285,7 @@ class App():
                     oml.progress("training model...")
                     lora_trainer=omlt.OMLoRATrainer(observer=observer)
                     with st.spinner('Training LoRA...'): 
+                        if(s.settings.make_captions): mkcap.make_captions(project_folder=s.settings.project_dir,project_name=s.settings.project_name)
                         lora_trainer.start_training(s.settings,s.hyper_parameters)                
                     oml.success("model was trained!")
                     s.training_status_ph.success("model was trained!")

@@ -751,13 +751,13 @@ class BaseDataset(torch.utils.data.Dataset):
         bucketingを行わない場合も呼び出し必須（ひとつだけbucketを作る）
         min_size and max_size are ignored when enable_bucket is False
         """
-        print("loading image sizes.")
+        oml.progress("loading image sizes.")
         for info in tqdm(self.image_data.values()):
             if info.image_size is None:
                 info.image_size = self.get_image_size(info.absolute_path)
 
-        if self.enable_bucket: print("make buckets")
-        else: print("prepare dataset")
+        if self.enable_bucket: oml.progress("make buckets")
+        else: oml.progress("prepare dataset")
 
         # bucketを作成し、画像をbucketに振り分ける
         if self.enable_bucket:
@@ -836,6 +836,7 @@ class BaseDataset(torch.utils.data.Dataset):
             #   self.buckets_indices.append(BucketBatchIndex(bucket_index, bucket_batch_size, batch_index))
             # ↑ここまで
 
+        oml.progress("shuffling buckets...")
         self.shuffle_buckets()
         self._length = len(self.buckets_indices)
 
@@ -1369,7 +1370,7 @@ class DreamBoothDataset(BaseDataset):
                         try:
                             lines = f.readlines()
                         except UnicodeDecodeError as e:
-                            print(f"illegal char in file (not UTF-8) / ファイルにUTF-8以外の文字があります: {cap_path}")
+                            oml.error(f"illegal char in file (not UTF-8) / ファイルにUTF-8以外の文字があります: {cap_path}")
                             raise e
                         assert len(lines) > 0, f"caption file is empty / キャプションファイルが空です: {cap_path}"
                         caption = lines[0].strip()
@@ -1382,17 +1383,15 @@ class DreamBoothDataset(BaseDataset):
                 return [], []
 
             img_paths = glob_images(subset.image_dir, "*")
-            print(f"found directory {subset.image_dir} contains {len(img_paths)} image files")
-
+            oml.debug(f"found directory {subset.image_dir} contains {len(img_paths)} image files")
+            oml.debug(f"caption_extension={subset.caption_extension}")
             # 画像ファイルごとにプロンプトを読み込み、もしあればそちらを使う
             captions = []
             missing_captions = []
             for img_path in img_paths:
                 cap_for_img = read_caption(img_path, subset.caption_extension)
                 if cap_for_img is None and subset.class_tokens is None:
-                    print(
-                        f"neither caption file nor class tokens are found. use empty caption for {img_path} / キャプションファイルもclass tokenも見つかりませんでした。空のキャプションを使用します: {img_path}"
-                    )
+                    oml.error(f"Neither caption file nor class tokens are found. Not using captions for image {img_path}")
                     captions.append("")
                     missing_captions.append(img_path)
                 else:
@@ -2551,8 +2550,9 @@ def get_sai_model_spec(
         title=title,
         reso=reso,
         is_stable_diffusion_ckpt=is_stable_diffusion_ckpt,
-        author=args.metadata_author,
-        description=args.metadata_description,
+        author="sundgaard", #args.metadata_author,
+        description="sundgaard rocks!", #args.metadata_description,
+        #learning_rate="1e-3", # not possible to add custom stuff
         license=args.metadata_license,
         tags=args.metadata_tags,
         timesteps=timesteps,
@@ -3339,8 +3339,9 @@ def get_optimizer(args, trainable_params):
 
             optimizer_kwargs[key] = value
     # print("optkwargs:", optimizer_kwargs)
-
+    
     lr = args.learning_rate
+    oml.debug(f"get_optimizer().lr={lr}")
     optimizer = None
 
     if optimizer_type == "Lion".lower():
@@ -4252,6 +4253,7 @@ def save_sd_model_on_train_end(
     unet,
     vae,
 ):
+    oml.debug("save_sd_model_on_train_end()")
     def sd_saver(ckpt_file, epoch_no, global_step):
         sai_metadata = get_sai_model_spec(None, args, False, False, False, is_stable_diffusion_ckpt=True)
         model_util.save_stable_diffusion_checkpoint(

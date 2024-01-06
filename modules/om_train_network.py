@@ -125,63 +125,158 @@ class NetworkTrainer:
     def sample_images(self, accelerator, args, epoch, global_step, device, vae, tokenizer, text_encoder, unet):
         om_ext_train_util.sample_images(accelerator, args, epoch, global_step, device, vae, tokenizer, text_encoder, unet)
 
+    def load_user_custom_config(s,args):
+        oml.debug(f"load_user_custom_config() -> Loading dataset config from {args.dataset_config}")
+        user_config = config_util.load_user_config(args.dataset_config)
+        ignored = ["train_data_dir", "reg_data_dir", "in_json"]
+        if any(getattr(args, attr) is not None for attr in ignored):
+            print(
+                "ignoring the following options because config file is found: {0} / 設定ファイルが利用されるため以下のオプションは無視されます: {0}".format(
+                    ", ".join(ignored)
+                )
+            )
+        return user_config
+    
+    def load_dreambooth_config(s,args):
+        oml.info("load_dreambooth_config() -> Using DreamBooth method.")
+        user_config = {
+            "datasets": [
+                {
+                    "subsets": config_util.generate_dreambooth_subsets_config_by_subdirs(
+                        args.train_data_dir, args.reg_data_dir
+                    )
+                }
+            ]
+        }
+        return user_config
+    
+    def build_config(s,args):
+        oml.debug("build_config()")
+        user_config = {
+            "datasets": [
+                {
+                    "subsets": [
+                        {
+                            "image_dir": args.train_data_dir,
+                            "metadata_file": args.in_json,
+                        }
+                    ]
+                }
+            ]
+        }
+        return user_config
+    
+    def get_user_config(s,args):
+        use_dreambooth_method = args.in_json is None
+        use_user_config = args.dataset_config is not None
+        user_config=None
+        if use_user_config:
+            user_config=s.load_user_custom_config(args)
+        else:
+            if use_dreambooth_method:
+                user_config=s.load_dreambooth_config(args)
+            else:
+                user_config=s.build_config()
+        return user_config,use_dreambooth_method,use_user_config
+    
+    def build_metadata(s,args,total_batch_size,dataset,dataset_dirs_info,reg_dataset_dirs_info):
+        metadata={
+            "ss_batch_size_per_device": args.train_batch_size,
+            "ss_total_batch_size": total_batch_size,
+            "ss_resolution": args.resolution,
+            "ss_color_aug": bool(args.color_aug),
+            "ss_flip_aug": bool(args.flip_aug),
+            "ss_random_crop": bool(args.random_crop),
+            "ss_shuffle_caption": bool(args.shuffle_caption),
+            "ss_enable_bucket": bool(dataset.enable_bucket),
+            "ss_bucket_no_upscale": bool(dataset.bucket_no_upscale),
+            "ss_min_bucket_reso": dataset.min_bucket_reso,
+            "ss_max_bucket_reso": dataset.max_bucket_reso,
+            "ss_keep_tokens": args.keep_tokens,
+            "ss_dataset_dirs": json.dumps(dataset_dirs_info),
+            "ss_reg_dataset_dirs": json.dumps(reg_dataset_dirs_info),
+            "ss_tag_frequency": json.dumps(dataset.tag_frequency),
+            "ss_bucket_info": json.dumps(dataset.bucket_info),
+        }
+        return metadata
+    
+    def build_more_metadata(s,args,session_id,training_started_at,train_dataset_group,train_dataloader,num_train_epochs,model_version,optimizer_name,optimizer_args):
+        metadata={
+            "ss_session_id": session_id,  # random integer indicating which group of epochs the model came from
+            "ss_training_started_at": training_started_at,  # unix timestamp
+            "ss_output_name": args.output_name,
+            "ss_learning_rate": args.learning_rate,
+            "ss_text_encoder_lr": args.text_encoder_lr,
+            "ss_unet_lr": args.unet_lr,
+            "ss_num_train_images": train_dataset_group.num_train_images,
+            "ss_num_reg_images": train_dataset_group.num_reg_images,
+            "ss_num_batches_per_epoch": len(train_dataloader),
+            "ss_num_epochs": num_train_epochs,
+            "ss_gradient_checkpointing": args.gradient_checkpointing,
+            "ss_gradient_accumulation_steps": args.gradient_accumulation_steps,
+            "ss_max_train_steps": args.max_train_steps,
+            "ss_lr_warmup_steps": args.lr_warmup_steps,
+            "ss_lr_scheduler": args.lr_scheduler,
+            "ss_network_module": args.network_module,
+            "ss_network_dim": args.network_dim,  # None means default because another network than LoRA may have another default dim
+            "ss_network_alpha": args.network_alpha,  # some networks may not have alpha
+            "ss_network_dropout": args.network_dropout,  # some networks may not have dropout
+            "ss_mixed_precision": args.mixed_precision,
+            "ss_full_fp16": bool(args.full_fp16),
+            "ss_v2": bool(args.v2),
+            "ss_base_model_version": model_version,
+            "ss_clip_skip": args.clip_skip,
+            "ss_max_token_length": args.max_token_length,
+            "ss_cache_latents": bool(args.cache_latents),
+            "ss_seed": args.seed,
+            "ss_lowram": args.lowram,
+            "ss_noise_offset": args.noise_offset,
+            "ss_multires_noise_iterations": args.multires_noise_iterations,
+            "ss_multires_noise_discount": args.multires_noise_discount,
+            "ss_adaptive_noise_scale": args.adaptive_noise_scale,
+            "ss_zero_terminal_snr": args.zero_terminal_snr,
+            "ss_training_comment": args.training_comment,  # will not be updated after training
+            "ss_sd_scripts_commit_hash": om_ext_train_util.get_git_revision_hash(),
+            "ss_optimizer": optimizer_name + (f"({optimizer_args})" if len(optimizer_args) > 0 else ""),
+            "ss_max_grad_norm": args.max_grad_norm,
+            "ss_caption_dropout_rate": args.caption_dropout_rate,
+            "ss_caption_dropout_every_n_epochs": args.caption_dropout_every_n_epochs,
+            "ss_caption_tag_dropout_rate": args.caption_tag_dropout_rate,
+            "ss_face_crop_aug_range": args.face_crop_aug_range,
+            "ss_prior_loss_weight": args.prior_loss_weight,
+            "ss_min_snr_gamma": args.min_snr_gamma,
+            "ss_scale_weight_norms": args.scale_weight_norms,
+            "ss_ip_noise_gamma": args.ip_noise_gamma,
+            "ss_debiased_estimation": bool(args.debiased_estimation_loss),
+        }
+        return metadata
+    
+    def print_accelerator(s,accelerator,train_dataset_group,train_dataloader,num_train_epochs,args):
+        accelerator.print("running training")
+        accelerator.print(f"  num train images * repeats: {train_dataset_group.num_train_images}")
+        accelerator.print(f"  num reg images: {train_dataset_group.num_reg_images}")
+        accelerator.print(f"  num batches per epoch / 1epoch: {len(train_dataloader)}")
+        accelerator.print(f"  num epochs / epoch: {num_train_epochs}")
+        accelerator.print(f"  batch size per device: {', '.join([str(d.batch_size) for d in train_dataset_group.datasets])}")
+        # accelerator.print(f"  total train batch size (with parallel & distributed & accumulation) ）: {total_batch_size}")
+        accelerator.print(f"  gradient accumulation steps = {args.gradient_accumulation_steps}")
+        accelerator.print(f"  total optimization steps: {args.max_train_steps}")
+    
     def train(self, args):
         oml.debug("train() - step1")
         session_id = random.randint(0, 2**32)
         training_started_at = time.time()
         om_ext_train_util.verify_training_args(args)
         om_ext_train_util.prepare_dataset_args(args, True)
-
         cache_latents = args.cache_latents
-        use_dreambooth_method = args.in_json is None
-        use_user_config = args.dataset_config is not None
-
-        if args.seed is None:
-            args.seed = random.randint(0, 2**32)
+        if args.seed is None: args.seed = random.randint(0, 2**32)
         set_seed(args.seed)
-
         tokenizer = self.load_tokenizer(args)
         tokenizers = tokenizer if isinstance(tokenizer, list) else [tokenizer]
 
         if args.dataset_class is None:
             blueprint_generator = BlueprintGenerator(ConfigSanitizer(True, True, False, True),observer=self.observer)
-            if use_user_config:
-                oml.info(f"Loading dataset config from {args.dataset_config}")
-                user_config = config_util.load_user_config(args.dataset_config)
-                ignored = ["train_data_dir", "reg_data_dir", "in_json"]
-                if any(getattr(args, attr) is not None for attr in ignored):
-                    print(
-                        "ignoring the following options because config file is found: {0} / 設定ファイルが利用されるため以下のオプションは無視されます: {0}".format(
-                            ", ".join(ignored)
-                        )
-                    )
-            else:
-                if use_dreambooth_method:
-                    oml.info("Using DreamBooth method.")
-                    user_config = {
-                        "datasets": [
-                            {
-                                "subsets": config_util.generate_dreambooth_subsets_config_by_subdirs(
-                                    args.train_data_dir, args.reg_data_dir
-                                )
-                            }
-                        ]
-                    }
-                else:
-                    oml.info("Training with captions.")
-                    user_config = {
-                        "datasets": [
-                            {
-                                "subsets": [
-                                    {
-                                        "image_dir": args.train_data_dir,
-                                        "metadata_file": args.in_json,
-                                    }
-                                ]
-                            }
-                        ]
-                    }
-
+            user_config,use_dreambooth_method,use_user_config=self.get_user_config(args)            
             blueprint = blueprint_generator.generate(user_config, args, tokenizer=tokenizer)
             print(f"train_network.blueprint.dataset_group={blueprint.dataset_group}")
             train_dataset_group = config_util.generate_dataset_group_by_blueprint(blueprint.dataset_group,self.observer)
@@ -200,28 +295,23 @@ class NetworkTrainer:
         if cache_latents: assert (train_dataset_group.is_latent_cacheable()), "when caching latents, either color_aug or random_crop cannot be used / latentをキャッシュするときはcolor_augとrandom_cropは使えません"
         self.assert_extra_args(args, train_dataset_group)
         print("preparing accelerator")
-        oml.debug("train() - step2")
+        oml.debug("train() - preparing accelerator...")
         accelerator = om_ext_train_util.prepare_accelerator(args)
         is_main_process = accelerator.is_main_process
 
         # mixed precisionに対応した型を用意しておき適宜castする
         weight_dtype, save_dtype = om_ext_train_util.prepare_dtype(args)
         vae_dtype = torch.float32 if args.no_half_vae else weight_dtype
-
-        # モデルを読み込む
+        oml.debug("train() - loading target model...")
         model_version, text_encoder, vae, unet = self.load_target_model(args, weight_dtype, accelerator)
-
         # text_encoder is List[CLIPTextModel] or CLIPTextModel
         text_encoders = text_encoder if isinstance(text_encoder, list) else [text_encoder]
-
-        # モデルに xformers とか memory efficient attention を組み込む
         om_ext_train_util.replace_unet_modules(unet, args.mem_eff_attn, args.xformers, args.sdpa)
-        if torch.__version__ >= "2.0.0":  # PyTorch 2.0.0 以上対応のxformersなら以下が使える
-            vae.set_use_memory_efficient_attention_xformers(args.xformers)
-
+        if torch.__version__ >= "2.0.0":  vae.set_use_memory_efficient_attention_xformers(args.xformers)
         # 差分追加学習のためにモデルを読み込む
         sys.path.append(os.path.dirname(__file__))
         accelerator.print("import network module:", args.network_module)
+        oml.debug("train() - importing network module...")
         network_module = importlib.import_module(args.network_module)
 
         if args.base_weights is not None:
@@ -231,14 +321,9 @@ class NetworkTrainer:
                     multiplier = 1.0
                 else:
                     multiplier = args.base_weights_multiplier[i]
-
                 accelerator.print(f"merging module: {weight_path} with multiplier {multiplier}")
-
-                module, weights_sd = network_module.create_network_from_weights(
-                    multiplier, weight_path, vae, text_encoder, unet, for_inference=True
-                )
+                module, weights_sd = network_module.create_network_from_weights(multiplier, weight_path, vae, text_encoder, unet, for_inference=True)
                 module.merge_to(text_encoder, unet, weights_sd, weight_dtype, accelerator.device if args.lowram else "cpu")
-
             accelerator.print(f"all weights merged: {', '.join(args.base_weights)}")
 
         # 学習を準備する
@@ -246,20 +331,14 @@ class NetworkTrainer:
             vae.to(accelerator.device, dtype=vae_dtype)
             vae.requires_grad_(False)
             vae.eval()
-            with torch.no_grad():
-                train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
+            with torch.no_grad(): train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
             vae.to("cpu")
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            if torch.cuda.is_available(): torch.cuda.empty_cache()
             gc.collect()
-
             accelerator.wait_for_everyone()
 
         # Text Encoder cpu/gpu
-        self.cache_text_encoder_outputs_if_needed(
-            args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-        )
-
+        self.cache_text_encoder_outputs_if_needed(args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype)
         # prepare network
         net_kwargs = {}
         if args.network_args is not None:
@@ -271,29 +350,15 @@ class NetworkTrainer:
         if args.dim_from_weights:
             network, _ = network_module.create_network_from_weights(1, args.network_weights, vae, text_encoder, unet, **net_kwargs)
         else:
-            if "dropout" not in net_kwargs:
-                # workaround for LyCORIS
-                net_kwargs["dropout"] = args.network_dropout
-
-            network = network_module.create_network(
-                1.0,
-                args.network_dim,
-                args.network_alpha,
-                vae,
-                text_encoder,
-                unet,
-                neuron_dropout=args.network_dropout,
-                **net_kwargs,
-            )
-        if network is None:
-            return
+            if "dropout" not in net_kwargs:                
+                net_kwargs["dropout"] = args.network_dropout # workaround for LyCORIS
+            network = network_module.create_network(1.0,args.network_dim,args.network_alpha,vae,text_encoder,unet,neuron_dropout=args.network_dropout,**net_kwargs,)
+        if network is None: return
 
         if hasattr(network, "prepare_network"):
             network.prepare_network(args)
         if args.scale_weight_norms and not hasattr(network, "apply_max_norm_regularization"):
-            print(
-                "warning: scale_weight_norms is specified but the network does not support it / scale_weight_normsが指定されていますが、ネットワークが対応していません"
-            )
+            print("warning: scale_weight_norms is specified but the network does not support it / scale_weight_normsが指定されていますが、ネットワークが対応していません")
             args.scale_weight_norms = False
 
         train_unet = not args.network_train_text_encoder_only
@@ -316,9 +381,7 @@ class NetworkTrainer:
         try:
             trainable_params = network.prepare_optimizer_params(args.text_encoder_lr, args.unet_lr, args.learning_rate)
         except TypeError:
-            accelerator.print(
-                "Deprecated: use prepare_optimizer_params(text_encoder_lr, unet_lr, learning_rate) instead of prepare_optimizer_params(text_encoder_lr, unet_lr)"
-            )
+            accelerator.print("Deprecated: use prepare_optimizer_params(text_encoder_lr, unet_lr, learning_rate) instead of prepare_optimizer_params(text_encoder_lr, unet_lr)")
             trainable_params = network.prepare_optimizer_params(args.text_encoder_lr, args.unet_lr)
 
         optimizer_name, optimizer_args, optimizer = om_ext_train_util.get_optimizer(args, trainable_params)
@@ -338,76 +401,50 @@ class NetworkTrainer:
         )
 
         if args.max_train_epochs is not None:
-            args.max_train_steps = args.max_train_epochs * math.ceil(
-                len(train_dataloader) / accelerator.num_processes / args.gradient_accumulation_steps
-            )
-            accelerator.print(
-                f"override steps. steps for {args.max_train_epochs} epochs is / 指定エポックまでのステップ数: {args.max_train_steps}"
-            )
+            args.max_train_steps = args.max_train_epochs * math.ceil(len(train_dataloader) / accelerator.num_processes / args.gradient_accumulation_steps)
+            accelerator.print(f"override steps. steps for {args.max_train_epochs} epochs is / 指定エポックまでのステップ数: {args.max_train_steps}")
 
         train_dataset_group.set_max_train_steps(args.max_train_steps)
-
         # lr scheduler
         lr_scheduler = om_ext_train_util.get_scheduler_fix(args, optimizer, accelerator.num_processes)
-
         # Experimental Feature: Perform training with fp16/bf16, including gradients. Convert the entire model to fp16/bf16.
         if args.full_fp16:
-            assert (
-                args.mixed_precision == "fp16"
-            ), "full_fp16 requires mixed precision='fp16' / full_fp16を使う場合はmixed_precision='fp16'を指定してください。"
+            assert (args.mixed_precision == "fp16"), "full_fp16 requires mixed precision='fp16' / full_fp16を使う場合はmixed_precision='fp16'を指定してください。"
             accelerator.print("enable full fp16 training.")
             network.to(weight_dtype)
         elif args.full_bf16:
-            assert (
-                args.mixed_precision == "bf16"
-            ), "full_bf16 requires mixed precision='bf16' / full_bf16を使う場合はmixed_precision='bf16'を指定してください。"
+            assert (args.mixed_precision == "bf16"), "full_bf16 requires mixed precision='bf16' / full_bf16を使う場合はmixed_precision='bf16'を指定してください。"
             accelerator.print("enable full bf16 training.")
             network.to(weight_dtype)
 
         unet.requires_grad_(False)
         unet.to(dtype=weight_dtype)
-        for t_enc in text_encoders:
-            t_enc.requires_grad_(False)
-
+        for t_enc in text_encoders:t_enc.requires_grad_(False)
         # It seems like the accelerator is doing something useful.
         # TODO The code is excessively redundant, so let's organize it.
-
         if train_unet and train_text_encoder:
             if len(text_encoders) > 1:
-                unet, t_enc1, t_enc2, network, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-                    unet, text_encoders[0], text_encoders[1], network, optimizer, train_dataloader, lr_scheduler
-                )
+                unet, t_enc1, t_enc2, network, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(unet, text_encoders[0], text_encoders[1], network, optimizer, train_dataloader, lr_scheduler)
                 text_encoder = text_encoders = [t_enc1, t_enc2]
                 del t_enc1, t_enc2
             else:
-                unet, text_encoder, network, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-                    unet, text_encoder, network, optimizer, train_dataloader, lr_scheduler
-                )
+                unet, text_encoder, network, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(unet, text_encoder, network, optimizer, train_dataloader, lr_scheduler)
                 text_encoders = [text_encoder]
         elif train_unet:
-            unet, network, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-                unet, network, optimizer, train_dataloader, lr_scheduler
-            )
-            for t_enc in text_encoders:
-                t_enc.to(accelerator.device, dtype=weight_dtype)
+            unet, network, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(unet, network, optimizer, train_dataloader, lr_scheduler)
+            for t_enc in text_encoders: t_enc.to(accelerator.device, dtype=weight_dtype)
         elif train_text_encoder:
             if len(text_encoders) > 1:
-                t_enc1, t_enc2, network, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-                    text_encoders[0], text_encoders[1], network, optimizer, train_dataloader, lr_scheduler
-                )
+                t_enc1, t_enc2, network, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(text_encoders[0], text_encoders[1], network, optimizer, train_dataloader, lr_scheduler)
                 text_encoder = text_encoders = [t_enc1, t_enc2]
                 del t_enc1, t_enc2
             else:
-                text_encoder, network, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-                    text_encoder, network, optimizer, train_dataloader, lr_scheduler
-                )
+                text_encoder, network, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(text_encoder, network, optimizer, train_dataloader, lr_scheduler)
                 text_encoders = [text_encoder]
 
             unet.to(accelerator.device, dtype=weight_dtype)  # move to device because unet is not prepared by accelerator
         else:
-            network, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-                network, optimizer, train_dataloader, lr_scheduler
-            )
+            network, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(network, optimizer, train_dataloader, lr_scheduler)
 
         # transform DDP after prepare (train_network here only)
         oml.debug("train() - step3")
@@ -457,78 +494,16 @@ class NetworkTrainer:
         # Train
         # TODO: find a way to handle total batch size when there are multiple datasets
         total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
-
-        accelerator.print("running training")
-        accelerator.print(f"  num train images * repeats: {train_dataset_group.num_train_images}")
-        accelerator.print(f"  num reg images: {train_dataset_group.num_reg_images}")
-        accelerator.print(f"  num batches per epoch / 1epoch: {len(train_dataloader)}")
-        accelerator.print(f"  num epochs / epoch: {num_train_epochs}")
-        accelerator.print(
-            f"  batch size per device: {', '.join([str(d.batch_size) for d in train_dataset_group.datasets])}"
-        )
-        # accelerator.print(f"  total train batch size (with parallel & distributed & accumulation) ）: {total_batch_size}")
-        accelerator.print(f"  gradient accumulation steps = {args.gradient_accumulation_steps}")
-        accelerator.print(f"  total optimization steps: {args.max_train_steps}")
-
+        self.print_accelerator(accelerator,train_dataset_group,train_dataloader,num_train_epochs,args)
         # TODO refactor metadata creation and move to util
         oml.debug("train() - step4")
-        metadata = {
-            "ss_session_id": session_id,  # random integer indicating which group of epochs the model came from
-            "ss_training_started_at": training_started_at,  # unix timestamp
-            "ss_output_name": args.output_name,
-            "ss_learning_rate": args.learning_rate,
-            "ss_text_encoder_lr": args.text_encoder_lr,
-            "ss_unet_lr": args.unet_lr,
-            "ss_num_train_images": train_dataset_group.num_train_images,
-            "ss_num_reg_images": train_dataset_group.num_reg_images,
-            "ss_num_batches_per_epoch": len(train_dataloader),
-            "ss_num_epochs": num_train_epochs,
-            "ss_gradient_checkpointing": args.gradient_checkpointing,
-            "ss_gradient_accumulation_steps": args.gradient_accumulation_steps,
-            "ss_max_train_steps": args.max_train_steps,
-            "ss_lr_warmup_steps": args.lr_warmup_steps,
-            "ss_lr_scheduler": args.lr_scheduler,
-            "ss_network_module": args.network_module,
-            "ss_network_dim": args.network_dim,  # None means default because another network than LoRA may have another default dim
-            "ss_network_alpha": args.network_alpha,  # some networks may not have alpha
-            "ss_network_dropout": args.network_dropout,  # some networks may not have dropout
-            "ss_mixed_precision": args.mixed_precision,
-            "ss_full_fp16": bool(args.full_fp16),
-            "ss_v2": bool(args.v2),
-            "ss_base_model_version": model_version,
-            "ss_clip_skip": args.clip_skip,
-            "ss_max_token_length": args.max_token_length,
-            "ss_cache_latents": bool(args.cache_latents),
-            "ss_seed": args.seed,
-            "ss_lowram": args.lowram,
-            "ss_noise_offset": args.noise_offset,
-            "ss_multires_noise_iterations": args.multires_noise_iterations,
-            "ss_multires_noise_discount": args.multires_noise_discount,
-            "ss_adaptive_noise_scale": args.adaptive_noise_scale,
-            "ss_zero_terminal_snr": args.zero_terminal_snr,
-            "ss_training_comment": args.training_comment,  # will not be updated after training
-            "ss_sd_scripts_commit_hash": om_ext_train_util.get_git_revision_hash(),
-            "ss_optimizer": optimizer_name + (f"({optimizer_args})" if len(optimizer_args) > 0 else ""),
-            "ss_max_grad_norm": args.max_grad_norm,
-            "ss_caption_dropout_rate": args.caption_dropout_rate,
-            "ss_caption_dropout_every_n_epochs": args.caption_dropout_every_n_epochs,
-            "ss_caption_tag_dropout_rate": args.caption_tag_dropout_rate,
-            "ss_face_crop_aug_range": args.face_crop_aug_range,
-            "ss_prior_loss_weight": args.prior_loss_weight,
-            "ss_min_snr_gamma": args.min_snr_gamma,
-            "ss_scale_weight_norms": args.scale_weight_norms,
-            "ss_ip_noise_gamma": args.ip_noise_gamma,
-            "ss_debiased_estimation": bool(args.debiased_estimation_loss),
-        }
-
+        metadata=self.build_more_metadata(args,session_id,training_started_at,train_dataset_group,train_dataloader,num_train_epochs,model_version,optimizer_name,optimizer_args)
         if use_user_config:
             # save metadata of multiple datasets
-            # NOTE: pack "ss_datasets" value as json one time
-            #   or should also pack nested collections as json?
+            # NOTE: pack "ss_datasets" value as json one time or should also pack nested collections as json?
             datasets_metadata = []
             tag_frequency = {}  # merge tag frequency for metadata editor
             dataset_dirs_info = {}  # merge subset dirs for metadata editor
-
             oml.debug("train() - step6")
             for dataset in train_dataset_group.datasets:
                 is_dreambooth_dataset = isinstance(dataset, DreamBoothDataset)
@@ -627,30 +602,10 @@ class NetworkTrainer:
                         "img_count": subset.img_count,
                     }
 
-            metadata.update(
-                {
-                    "ss_batch_size_per_device": args.train_batch_size,
-                    "ss_total_batch_size": total_batch_size,
-                    "ss_resolution": args.resolution,
-                    "ss_color_aug": bool(args.color_aug),
-                    "ss_flip_aug": bool(args.flip_aug),
-                    "ss_random_crop": bool(args.random_crop),
-                    "ss_shuffle_caption": bool(args.shuffle_caption),
-                    "ss_enable_bucket": bool(dataset.enable_bucket),
-                    "ss_bucket_no_upscale": bool(dataset.bucket_no_upscale),
-                    "ss_min_bucket_reso": dataset.min_bucket_reso,
-                    "ss_max_bucket_reso": dataset.max_bucket_reso,
-                    "ss_keep_tokens": args.keep_tokens,
-                    "ss_dataset_dirs": json.dumps(dataset_dirs_info),
-                    "ss_reg_dataset_dirs": json.dumps(reg_dataset_dirs_info),
-                    "ss_tag_frequency": json.dumps(dataset.tag_frequency),
-                    "ss_bucket_info": json.dumps(dataset.bucket_info),
-                }
-            )
+            metadata.update(self.build_metadata(args,total_batch_size,dataset,dataset_dirs_info,reg_dataset_dirs_info))
 
         # add extra args
-        if args.network_args:
-            metadata["ss_network_args"] = json.dumps(net_kwargs)
+        if args.network_args: metadata["ss_network_args"] = json.dumps(net_kwargs)
 
         # model name and hash
         oml.debug("train() - step8")
@@ -681,10 +636,7 @@ class NetworkTrainer:
         # TODO Observer
         progress_bar = tqdm(range(args.max_train_steps), smoothing=0, disable=not accelerator.is_local_main_process, desc="steps")
         global_step = 0
-
-        noise_scheduler = DDPMScheduler(
-            beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", num_train_timesteps=1000, clip_sample=False
-        )
+        noise_scheduler = DDPMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", num_train_timesteps=1000, clip_sample=False)
         prepare_scheduler_for_custom_training(noise_scheduler, accelerator.device)
         if args.zero_terminal_snr:
             custom_train_functions.fix_noise_scheduler_betas_for_zero_terminal_snr(noise_scheduler)
@@ -693,22 +645,19 @@ class NetworkTrainer:
             init_kwargs = {}
             if args.log_tracker_config is not None:
                 init_kwargs = toml.load(args.log_tracker_config)
-            accelerator.init_trackers(
-                "network_train" if args.log_tracker_name is None else args.log_tracker_name, init_kwargs=init_kwargs
-            )
+            accelerator.init_trackers("network_train" if args.log_tracker_name is None else args.log_tracker_name, init_kwargs=init_kwargs)
 
         # TODO Observer
         loss_recorder = om_ext_train_util.LossRecorder()
         del train_dataset_group
 
         # callback for step start
-        if hasattr(network, "on_step_start"):
-            on_step_start = network.on_step_start
-        else:
-            on_step_start = lambda *args, **kwargs: None
+        if hasattr(network, "on_step_start"): on_step_start = network.on_step_start
+        else: on_step_start = lambda *args, **kwargs: None
 
         # function for saving/removing
         def save_model(ckpt_name, unwrapped_nw, steps, epoch_no, force_sync_upload=False):
+            oml.debug(f"save_model()")
             os.makedirs(args.output_dir, exist_ok=True)
             ckpt_file = os.path.join(args.output_dir, ckpt_name)
 
@@ -718,8 +667,16 @@ class NetworkTrainer:
             metadata["ss_epoch"] = str(epoch_no)
 
             metadata_to_save = minimum_metadata if args.no_metadata else metadata
+            oml.debug(f"save_model() - metadata to save are {metadata_to_save}...")
             sai_metadata = om_ext_train_util.get_sai_model_spec(None, args, self.is_sdxl, True, False)
+            oml.debug(f"save_model() - sai_metadata are {sai_metadata}...")
             metadata_to_save.update(sai_metadata)
+
+            oml.debug(f"save_model() - saving weights...")
+            #import modules.networks.lora_diffusers as lodi            
+            #if(unwrapped_nw is lodi.LoRANetwork):
+                #lora_network:lodi.LoRANetwork=network
+                #lora_network.save
 
             unwrapped_nw.save_weights(ckpt_file, save_dtype, metadata_to_save)
             if args.huggingface_repo_id is not None:
@@ -736,9 +693,7 @@ class NetworkTrainer:
         for epoch in range(num_train_epochs):
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
             current_epoch.value = epoch + 1
-
             metadata["ss_epoch"] = str(epoch + 1)
-
             network.on_epoch_start(text_encoder, unet)
 
             for step, batch in enumerate(train_dataloader):
@@ -750,10 +705,7 @@ class NetworkTrainer:
                         if "latents" in batch and batch["latents"] is not None:
                             latents = batch["latents"].to(accelerator.device)
                         else:
-                            # latentに変換
                             latents = vae.encode(batch["images"].to(dtype=vae_dtype)).latent_dist.sample()
-
-                            # NaNが含まれていれば警告を表示し0に置き換える
                             if torch.any(torch.isnan(latents)):
                                 accelerator.print("NaN found in latents, replacing with zeros")
                                 latents = torch.where(torch.isnan(latents), torch.zeros_like(latents), latents)
@@ -771,30 +723,20 @@ class NetworkTrainer:
                                 args.max_token_length // 75 if args.max_token_length else 1,
                                 clip_skip=args.clip_skip,
                             )
-                        else:
-                            text_encoder_conds = self.get_text_cond(
-                                args, accelerator, batch, tokenizers, text_encoders, weight_dtype
-                            )
+                        else: text_encoder_conds = self.get_text_cond(args, accelerator, batch, tokenizers, text_encoders, weight_dtype)
 
                     # Sample noise, sample a random timestep for each image, and add noise to the latents,
                     # with noise offset and/or multires noise if specified
-                    noise, noisy_latents, timesteps = om_ext_train_util.get_noise_noisy_latents_and_timesteps(
-                        args, noise_scheduler, latents
-                    )
-
+                    noise, noisy_latents, timesteps = om_ext_train_util.get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents)
                     # Predict the noise residual
                     with accelerator.autocast():
-                        noise_pred = self.call_unet(
-                            args, accelerator, unet, noisy_latents, timesteps, text_encoder_conds, batch, weight_dtype
-                        )
+                        noise_pred = self.call_unet(args, accelerator, unet, noisy_latents, timesteps, text_encoder_conds, batch, weight_dtype)
 
-                    if args.v_parameterization:
-                        # v-parameterization training
-                        target = noise_scheduler.get_velocity(latents, noise, timesteps)
-                    else:
-                        target = noise
+                    if args.v_parameterization: target = noise_scheduler.get_velocity(latents, noise, timesteps) # v-parameterization training
+                    else: target = noise
 
                     loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
+                    #oml.debug(f"torch.mse_loss={loss}")
                     loss = loss.mean([1, 2, 3])
 
                     loss_weights = batch["loss_weights"]  # 各sampleごとのweight
@@ -809,6 +751,7 @@ class NetworkTrainer:
                     if args.debiased_estimation_loss:
                         loss = apply_debiased_estimation(loss, timesteps, noise_scheduler)
 
+                    #oml.debug(f"loss before mean()={loss}")
                     loss = loss.mean()  # It's an average, so there's no need to divide by the batch size.
                     #oml.debug("train() - step9a")
                     accelerator.backward(loss)
@@ -855,7 +798,8 @@ class NetworkTrainer:
                 avr_loss: float = loss_recorder.moving_average
                 logs = {"avr_loss": avr_loss}  # , "lr": lr_scheduler.get_last_lr()[0]}
                 progress_bar.set_postfix(**logs)
-                #oml.debug(f"current_epoch={current_epoch.value},current_loss={current_loss},avr_loss={avr_loss}")
+                oml.debug(f"current_epoch={current_epoch.value},current_loss={current_loss},avr_loss={avr_loss},global_step={global_step},loss_obj=={loss}")
+                if(math.isnan(current_loss)): raise Exception(f"Current loss is NaN but {type(current_loss)}, loss={loss}")
                 self.observer.observe(self.observer.TRAINING_STEP_EVENT, args=(current_epoch,step,current_loss,avr_loss,global_step))
                 if args.scale_weight_norms:
                     progress_bar.set_postfix(**{**max_mean_logs, **logs})
@@ -898,6 +842,9 @@ class NetworkTrainer:
 
         if is_main_process:
             network = accelerator.unwrap_model(network)
+            #oml.debug(f"train().unwrapped model")
+            #import modules.networks.lora_diffusers as lodi
+            #lora_network:lodi.LoRANetwork=network
 
         accelerator.end_training()
 
@@ -906,6 +853,7 @@ class NetworkTrainer:
 
         if is_main_process:
             ckpt_name = om_ext_train_util.get_last_ckpt_name(args, "." + args.save_model_as)
+            oml.debug("train() -> final save of model and meta data...")
             save_model(ckpt_name, network, global_step, num_train_epochs, force_sync_upload=True)
             oml.info("model saved.")
 
@@ -986,14 +934,15 @@ def setup_parser() -> argparse.ArgumentParser:
     )
     return parser
 
-def check_gpu():
+def check_cuda(observer:omo.OMObserver):
     gpu = GPUtil.getGPUs()[0]
     oml.debug(f"GPU=[{gpu.name}]")
-    if torch.cuda.is_available():
-        oml.success(f"Using CUDA with {gpu.name}")
-    else:
-        oml.warn(f"No GPU found! Using CPU instead.")
+    cuda_installed=torch.cuda.is_available()
+    if cuda_installed: oml.success(f"Using CUDA with {gpu.name}")
+    else: oml.warn(f"No GPU found! Using CPU instead.")
     oml.debug(f"PyTorch version: {torch.__version__}")
+    observer.observe(observer.CUDA_INFO_EVENT,args=(gpu,cuda_installed))
+    return
     
 def print_args(args):
     argDict=vars(args)   
@@ -1058,7 +1007,7 @@ def update_args(args,config_file,dataset_config_file,settings:omgs.OMGeneralSett
     #args.train_data_dir=f"{root_dir}/{project_name}"
 
 def train_network_main(observer:omo.OMObserver,settings,hyper_parameters,dataset_config_file, config_file, accelerate_config_file, num_cpu_threads_per_process):    
-    check_gpu()
+    check_cuda(observer)
     parser = setup_parser()
     args = parser.parse_args()         
     args = om_ext_train_util.read_config_from_file(args, parser)

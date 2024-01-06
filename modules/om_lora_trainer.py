@@ -16,8 +16,6 @@ class OMLoRATrainer():
   
   def configure_globals(s):
     # These carry information from past executions
-    #if "model_url" in globals(): old_model_url = model_url
-    #else: old_model_url = None
     if "dependencies_installed" not in globals(): dependencies_installed = False
     #s.model_file=None
     s.custom_dataset = None
@@ -127,6 +125,7 @@ class OMLoRATrainer():
     s.accelerate_config_file = os.path.join(s.repo_dir, "accelerate_config/config.yaml")
 
   def install_dependencies(s):
+    raise Exception("Seems to be obsolete!")
     from accelerate.utils import write_basic_config
     if not os.path.exists(accelerate_config_file):
       write_basic_config(save_location=accelerate_config_file)
@@ -137,7 +136,7 @@ class OMLoRATrainer():
   def validate_dataset(s):
     #global lr_warmup_steps, lr_warmup_ratio, caption_extension, keep_tokens, keep_tokens_weight, weighted_captions, adjust_tags
     supported_types = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
-    oml.debug("\n💿 Checking dataset...")
+    oml.debug("💿 Checking dataset...")
     if not s.project_name.strip() or any(c in s.project_name for c in " .()\"'\\/"):
       oml.error("Please choose a valid project name.")
       return
@@ -304,12 +303,13 @@ class OMLoRATrainer():
           config_dict[key] = {k: v for k, v in config_dict[key].items() if v is not None}
 
       with open(s.config_file, "w") as f:
-        f.write(toml.dumps(config_dict))
-      print(f"\n📄 Config saved to {s.config_file}")
+        #f.write(toml.dumps(config_dict))
+        #oml.debug(f"📄 Config saved to {s.config_file}")
+        oml.warn(f"📄 Skipping save of config file {s.config_file}, not needed anymore")
 
     if s.override_dataset_config_file:
       dataset_config_file = s.override_dataset_config_file
-      print(f"⭕ Using custom dataset config file {dataset_config_file}")
+      oml.debug(f"⭕ Using custom dataset config file {dataset_config_file}")
     else:
       dataset_config_dict = {
         "general": {
@@ -343,7 +343,8 @@ class OMLoRATrainer():
 
       with open(s.dataset_config_file, "w") as f:
         f.write(toml.dumps(dataset_config_dict))
-      print(f"📄 Dataset config saved to {s.dataset_config_file}")
+        oml.progress(f"📄 Dataset config saved to {s.dataset_config_file}")
+      return
 
   def strip_filename(s,file_path):
       head, tail = os.path.split(file_path)
@@ -386,65 +387,6 @@ class OMLoRATrainer():
 
     return True
 
-  def download_model_org(s):
-    raise Exception("Is this method ever called???")
-    global old_model_url, model_url, model_file
-    real_model_url = model_url.strip()  
-
-    if real_model_url.lower().endswith((".ckpt", ".safetensors")):
-      model_file = f"{s.root_dir}/models{real_model_url[real_model_url.rfind('/'):]}"
-      oml.debug(f"Model file={model_file}")
-    else:
-      model_file = f"{s.root_dir}/models/downloaded_model.safetensors"
-      
-    oml.debug(f"download_model() - step1")
-    if m := re.search(r"(?:https?://)?(?:www\.)?huggingface\.co/[^/]+/[^/]+/blob", model_url):
-      real_model_url = real_model_url.replace("blob", "resolve")
-    elif m := re.search(r"(?:https?://)?(?:www\\.)?civitai\.com/models/([0-9]+)(/[A-Za-z0-9-_]+)?", model_url):
-      if m.group(2):
-        model_file = f"/content{m.group(2)}.safetensors"
-      if m := re.search(r"modelVersionId=([0-9]+)", model_url):
-        real_model_url = f"https://civitai.com/api/download/models/{m.group(1)}"
-      else:
-        raise Valueoml.error("optional_custom_training_model_url contains a civitai link, but the link doesn't include a modelVersionId. You can also right click the download button to copy the direct download link.")
-
-  #  !aria2c "{real_model_url}" --console-log-level=warn -c -s 16 -x 16 -k 10M -d / -o "{model_file}"
-    oml.debug(f"download_model() - step2")
-    from urllib import request
-    remote_url = real_model_url
-    local_file = model_file
-    model_folder=strip_filename(local_file)
-    oml.debug(f"model_folder={model_folder}")
-    if os.path.exists(model_file):
-      oml.debug(f"Already downloaded {model_file}, skipping new download!")
-    else:
-      os.makedirs(model_folder, exist_ok=True)
-      oml.debug(f"Trying to downoad model via real_model_url={real_model_url} to local file {model_file}...")  
-      httpResp=request.urlretrieve(remote_url, local_file) # Skip if exists  
-      oml.debug(f"httpResp={httpResp}")
-
-    if model_file.lower().endswith(".safetensors"):
-      from safetensors.torch import load_file as load_safetensors
-      try:
-        test = load_safetensors(model_file)
-        del test
-      except Exception as e:
-        #if "HeaderTooLarge" in str(e):
-        new_model_file = os.path.splitext(model_file)[0]+".ckpt"
-        #!mv "{model_file}" "{new_model_file}"
-        model_file = new_model_file
-        print(f"Renamed model to {os.path.splitext(model_file)[0]}.ckpt")
-
-    if model_file.lower().endswith(".ckpt"):
-      from torch import load as load_ckpt
-      try:
-        test = load_ckpt(model_file)
-        del test
-      except Exception as e:
-        return False
-
-    return True
-
   def create_folder_structure(s):
     oml.info(f"Root folder is [{s.root_dir}]")
     for dir in (s.root_dir, s.deps_dir, s.repo_dir, s.log_folder, s.images_folder, s.output_folder, s.config_folder):
@@ -470,15 +412,10 @@ class OMLoRATrainer():
     oml.success(f"Starting LoRA project [{settings.project_name}]")
     s.create_folder_structure()
     if not s.validate_dataset(): return
-    #if old_model_url != model_url or not model_file or not os.path.exists(model_file):
     s.download_model()
     s.create_config()
     print("\n⭐ Starting trainer...\n")
-    #os.chdir(s.repo_dir)
     # https://huggingface.co/docs/accelerate/basic_tutorials/launch    
     om_train_network.train_network_main(observer=s.observer,settings=settings,hyper_parameters=hyper_parameters,dataset_config_file=s.dataset_config_file,config_file=s.config_file,accelerate_config_file=s.accelerate_config_file,num_cpu_threads_per_process=1)
     oml.success("You can now download your Lora!")
-    #if not get_ipython().__dict__['user_ns']['_exit_code']:
-    #display(Markdown("### ✅ Done! [Go download your Lora from Google Drive](https://drive.google.com/drive/my-drive)\n"
-    #                   "### There will be several files, you should try the latest version (the file with the largest number next to it)"))
 

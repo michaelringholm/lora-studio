@@ -16,6 +16,7 @@ class OMGeneralSettings():
         s.persistent_data_loader_workers:bool=None # settings. #False #True
         s.v2:bool=None # settings. #False
         s.save_model_as:str=None # settings. #"safetensors"
-        s.cache_latents:bool=None # settings. #True 
+        s.cache_latents:bool=None # settings. #True
+        s.make_captions:bool=False
         return
     
