@@ -16,6 +16,7 @@ from transformers import CLIPTextModel, CLIPTokenizer, CLIPTextConfig, logging
 from diffusers import AutoencoderKL, DDIMScheduler, StableDiffusionPipeline  # , UNet2DConditionModel
 from safetensors.torch import load_file, save_file
 from modules.om_ext_original_unet import UNet2DConditionModel
+import modules.om_logging as oml
 
 # DiffUsers版StableDiffusionのモデルパラメータ
 NUM_TRAIN_TIMESTEPS = 1000
@@ -398,6 +399,7 @@ def convert_ldm_unet_checkpoint(v2, checkpoint, config):
 
 
 def convert_ldm_vae_checkpoint(checkpoint, config):
+    oml.debug(f"convert_ldm_vae_checkpoint()...")
     # extract state dict for VAE
     vae_state_dict = {}
     vae_key = "first_stage_model."
@@ -997,6 +999,7 @@ def load_checkpoint_with_text_encoder_conversion(ckpt_path, device="cpu"):
 
 # TODO dtype指定の動作が怪しいので確認する text_encoderを指定形式で作れるか未確認
 def load_models_from_stable_diffusion_checkpoint(v2, ckpt_path, device="cpu", dtype=None, unet_use_linear_projection_in_v2=True):
+    oml.debug(f"load_models_from_stable_diffusion_checkpoint()...")
     _, state_dict = load_checkpoint_with_text_encoder_conversion(ckpt_path, device)
 
     # Convert the UNet2DConditionModel model.
@@ -1005,7 +1008,7 @@ def load_models_from_stable_diffusion_checkpoint(v2, ckpt_path, device="cpu", dt
 
     unet = UNet2DConditionModel(**unet_config).to(device)
     info = unet.load_state_dict(converted_unet_checkpoint)
-    print("loading u-net:", info)
+    oml.debug(f"loading u-net:{info}")
 
     # Convert the VAE model.
     vae_config = create_vae_diffusers_config()
@@ -1013,7 +1016,7 @@ def load_models_from_stable_diffusion_checkpoint(v2, ckpt_path, device="cpu", dt
 
     vae = AutoencoderKL(**vae_config).to(device)
     info = vae.load_state_dict(converted_vae_checkpoint)
-    print("loading vae:", info)
+    oml.debug(f"loading vae: {info}")
 
     # convert text_model
     if v2:
@@ -1070,7 +1073,7 @@ def load_models_from_stable_diffusion_checkpoint(v2, ckpt_path, device="cpu", dt
         )
         text_model = CLIPTextModel._from_config(cfg) # Careful this will fail with clash of torch versions
         info = text_model.load_state_dict(converted_text_encoder_checkpoint)
-    print("loading text encoder:", info)
+    oml.debug("loading text encoder: {info}")
 
     return text_model, vae, unet
 
@@ -1158,9 +1161,8 @@ def convert_text_encoder_state_dict_to_sd_v2(checkpoint, make_dummy_weights=Fals
     return new_sd
 
 
-def save_stable_diffusion_checkpoint(
-    v2, output_file, text_encoder, unet, ckpt_path, epochs, steps, metadata, save_dtype=None, vae=None
-):
+def save_stable_diffusion_checkpoint(v2, output_file, text_encoder, unet, ckpt_path, epochs, steps, metadata, save_dtype=None, vae=None):
+    oml.debug(f"save_stable_diffusion_checkpoint()...")
     if ckpt_path is not None:
         # epoch/stepを参照する。またVAEがメモリ上にないときなど、もう一度VAEを含めて読み込む
         checkpoint, state_dict = load_checkpoint_with_text_encoder_conversion(ckpt_path)
@@ -1230,6 +1232,7 @@ def save_stable_diffusion_checkpoint(
 
 
 def save_diffusers_checkpoint(v2, output_dir, text_encoder, unet, pretrained_model_name_or_path, vae=None, use_safetensors=False):
+    oml.debug(f"save_diffusers_checkpoint()...")
     if pretrained_model_name_or_path is None:
         # load default settings for v1/v2
         if v2:
@@ -1259,14 +1262,14 @@ VAE_PREFIX = "first_stage_model."
 
 
 def load_vae(vae_id, dtype):
-    print(f"load VAE: {vae_id}")
+    oml.debug(f"load VAE: {vae_id}")
     if os.path.isdir(vae_id) or not os.path.isfile(vae_id):
         # Diffusers local/remote
         try:
             vae = AutoencoderKL.from_pretrained(vae_id, subfolder=None, torch_dtype=dtype)
         except EnvironmentError as e:
-            print(f"exception occurs in loading vae: {e}")
-            print("retry with subfolder='vae'")
+            oml.error(f"exception occurs in loading vae: {e}")
+            oml.error("retry with subfolder='vae'")
             vae = AutoencoderKL.from_pretrained(vae_id, subfolder="vae", torch_dtype=dtype)
         return vae
 
@@ -1306,21 +1309,18 @@ def load_vae(vae_id, dtype):
 
 
 def make_bucket_resolutions(max_reso, min_size=256, max_size=1024, divisible=64):
+    oml.debug(f"make_bucket_resolutions() called...")
     max_width, max_height = max_reso
     max_area = (max_width // divisible) * (max_height // divisible)
-
     resos = set()
-
     size = int(math.sqrt(max_area)) * divisible
     resos.add((size, size))
-
     size = min_size
     while size <= max_size:
         width = size
         height = min(max_size, (max_area // (width // divisible)) * divisible)
         resos.add((width, height))
         resos.add((height, width))
-
         # # make additional resos
         # if width >= height and width - divisible >= min_size:
         #   resos.add((width - divisible, height))
@@ -1328,7 +1328,6 @@ def make_bucket_resolutions(max_reso, min_size=256, max_size=1024, divisible=64)
         # if height >= width and height - divisible >= min_size:
         #   resos.add((width, height - divisible))
         #   resos.add((height - divisible, width))
-
         size += divisible
 
     resos = list(resos)

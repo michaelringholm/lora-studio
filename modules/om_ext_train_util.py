@@ -871,56 +871,47 @@ class BaseDataset(torch.utils.data.Dataset):
 
     def cache_latents(self, vae, vae_batch_size=1, cache_to_disk=False, is_main_process=True):
         # マルチGPUには対応していないので、そちらはtools/cache_latents.pyを使うこと
-        print("caching latents.")
-
+        oml.progress("caching latents.")
         image_infos = list(self.image_data.values())
-
         # sort by resolution
         image_infos.sort(key=lambda info: info.bucket_reso[0] * info.bucket_reso[1])
-
         # split by resolution
         batches = []
         batch = []
-        print("checking cache validity...")
+        oml.debug("checking cache validity...")
         for info in tqdm(image_infos):
             subset = self.image_to_subset[info.image_key]
-
             if info.latents_npz is not None:  # fine tuning dataset
                 continue
-
             # check disk cache exists and size of latents
             if cache_to_disk:
                 info.latents_npz = os.path.splitext(info.absolute_path)[0] + ".npz"
                 if not is_main_process:  # store to info only
                     continue
-
                 cache_available = is_disk_cached_latents_is_expected(info.bucket_reso, info.latents_npz, subset.flip_aug)
-
                 if cache_available:  # do not add to batch
                     continue
-
             # if last member of batch has different resolution, flush the batch
             if len(batch) > 0 and batch[-1].bucket_reso != info.bucket_reso:
                 batches.append(batch)
                 batch = []
-
             batch.append(info)
-
             # if number of data in batch is enough, flush the batch
             if len(batch) >= vae_batch_size:
                 batches.append(batch)
                 batch = []
-
         if len(batch) > 0:
             batches.append(batch)
-
         if cache_to_disk and not is_main_process:  # if cache to disk, don't cache latents in non-main process, set to info only
             return
-
         # iterate batches: batch doesn't have image, image will be loaded in cache_batch_latents and discarded
-        print("caching latents...")
+        oml.debug("caching latents...")
+        next_image_batch=1
         for batch in tqdm(batches, smoothing=1, total=len(batches)):
+            self.observer.observe(self.observer.CACHED_LATENT_EVENT,args=(batch,len(batches),next_image_batch))
             cache_batch_latents(vae, cache_to_disk, batch, subset.flip_aug, subset.random_crop)
+            next_image_batch+=1
+        return
 
     # weight_dtypeを指定するとText Encoderそのもの、およひ出力がweight_dtypeになる
     # SDXLでのみ有効だが、datasetのメソッドとする必要があるので、sdxl_train_util.pyではなくこちらに実装する
@@ -3768,7 +3759,7 @@ def _load_target_model(args: argparse.Namespace, weight_dtype, device="cpu", une
     name_or_path = os.path.realpath(name_or_path) if os.path.islink(name_or_path) else name_or_path
     load_stable_diffusion_format = os.path.isfile(name_or_path)  # determine SD or Diffusers
     if load_stable_diffusion_format:
-        print(f"load StableDiffusion checkpoint: {name_or_path}")
+        oml.debug(f"load StableDiffusion checkpoint: {name_or_path}") # TODO add to observer
         text_encoder, vae, unet = model_util.load_models_from_stable_diffusion_checkpoint(
             args.v2, name_or_path, device, unet_use_linear_projection_in_v2=unet_use_linear_projection_in_v2
         )

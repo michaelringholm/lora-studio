@@ -65,9 +65,9 @@ def make_captions(project_folder:str,project_name:str):
     settings.top_p=None
     settings.caption_extension=".txt" #type=str, default=".caption", help="extension of caption file
     settings.num_beams=1 #type=int, default=1, help="num of beams in beam search /beam search
-    settings.top_p=0.9 #type=float, default=0.9, help="top_p in Nucleus sampling / Nucleus sampling
-    settings.max_length=75 #type=int, default=75, help="max length of caption / caption
-    settings.min_length=5 #type=int, default=5, help="min length of caption / caption
+    settings.top_p:float=0.9 #type=float, default=0.9, help="top_p in Nucleus sampling / Nucleus sampling
+    settings.max_length:int=75 #type=int, default=75, help="max length of caption / caption
+    settings.min_length:int=5 #type=int, default=5, help="min length of caption / caption
     settings.debug=False
     # fix the seed for reproducibility
     seed = settings.seed  # + utils.get_rank()
@@ -92,7 +92,7 @@ def make_captions(project_folder:str,project_name:str):
     model = model.to(DEVICE)
     oml.debug("BLIP loaded")
 
-    # captioningする
+    # captioning
     def run_batch(path_imgs):
         imgs = torch.stack([im for _, im in path_imgs]).to(DEVICE)
 
@@ -145,22 +145,6 @@ def make_captions(project_folder:str,project_name:str):
                 b_imgs.clear()
     if len(b_imgs) > 0:
         run_batch(b_imgs)
-    return
-
-
-def __generate_captions():   
-    #project_name = "pernille_harder_211220231821"
-    #root_dir="D:\github\lora-trainer\Loras"
-    #parser = setup_parser()
-    #print("step2")
-    #parser.set_defaults() #.parse_args()
-    #args = parser.parse_args()
-    #print("step3")
-    #argDict=vars(args)
-    #print("************* START OF ARGS **********************")
-    #for argKey in argDict:
-        #print(f"{argKey}={argDict[argKey]}")
-    #print("************* END OF ARGS **********************")
     return
 
 

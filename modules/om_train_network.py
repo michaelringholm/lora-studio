@@ -130,11 +130,7 @@ class NetworkTrainer:
         user_config = config_util.load_user_config(args.dataset_config)
         ignored = ["train_data_dir", "reg_data_dir", "in_json"]
         if any(getattr(args, attr) is not None for attr in ignored):
-            print(
-                "ignoring the following options because config file is found: {0} / 設定ファイルが利用されるため以下のオプションは無視されます: {0}".format(
-                    ", ".join(ignored)
-                )
-            )
+            oml.warn("ignoring the following options because config file is found: {0}".format(", ".join(ignored)))
         return user_config
     
     def load_dreambooth_config(s,args):
@@ -704,13 +700,16 @@ class NetworkTrainer:
                     with torch.no_grad():
                         if "latents" in batch and batch["latents"] is not None:
                             latents = batch["latents"].to(accelerator.device)
+                            #oml.debug(f"latents_a={latents}")
+                            oml.debug(f"batch[images]={batch['images']}")
                         else:
                             latents = vae.encode(batch["images"].to(dtype=vae_dtype)).latent_dist.sample()
+                            #oml.debug(f"latents_b={latents}")
                             if torch.any(torch.isnan(latents)):
                                 accelerator.print("NaN found in latents, replacing with zeros")
                                 latents = torch.where(torch.isnan(latents), torch.zeros_like(latents), latents)
                         latents = latents * self.vae_scale_factor
-                    b_size = latents.shape[0]
+                    b_size = latents.shape[0] # TODO remove?
 
                     with torch.set_grad_enabled(train_text_encoder), accelerator.autocast():
                         # Get the text embedding for conditioning
@@ -735,8 +734,12 @@ class NetworkTrainer:
                     if args.v_parameterization: target = noise_scheduler.get_velocity(latents, noise, timesteps) # v-parameterization training
                     else: target = noise
 
-                    loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
-                    #oml.debug(f"torch.mse_loss={loss}")
+                    loss:torch.Tensor = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
+                    #oml.debug(f"torch.loss.mean([1, 2, 3])={loss.mean([1, 2, 3])}")
+                    #oml.debug(f"torch.noise_pred={noise_pred}")
+                    #oml.debug(f"torch.noise[0]={noise[0]}")
+                    #oml.debug(f"torch.noisy_latents[0]={noisy_latents[0]}")
+                    #oml.debug(f"torch.target[0]={target[0]}")
                     loss = loss.mean([1, 2, 3])
 
                     loss_weights = batch["loss_weights"]  # 各sampleごとのweight

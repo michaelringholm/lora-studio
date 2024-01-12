@@ -4,6 +4,7 @@ class OMObserver():
     TRAINING_STEP_EVENT:str='TRAINING_STEP_EVENT'
     TRANING_START_VALIDATE_EVENT:str='TRANING_START_VALIDATE_EVENT'
     CUDA_INFO_EVENT:str='CUDA_INFO_EVENT'
+    CACHED_LATENT_EVENT:str='CACHED_LATENT_EVENT'
 
     def __init__(s,app):
         s.app=app
@@ -31,4 +32,9 @@ class OMObserver():
                 gpu=args[0]
                 cuda_installed=args[1]
                 s.app.update_cuda_info(gpu,cuda_installed)
+            elif(event==s.CACHED_LATENT_EVENT):
+                batch=args[0]
+                num_batches=args[1]
+                next_image_batch=args[2]
+                s.app.update_cache_latents_progress(batch,num_batches,next_image_batch)
         return

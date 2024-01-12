@@ -115,12 +115,21 @@ class App():
     def update_training_progress(s,epoch,step,current_loss,avg_loss,global_step):
         total_steps=int(s.total_steps)
         progress=(global_step)/total_steps # s.hyper_parameters.num_epochs*20
+        if(progress>1):
+            progress=1
+            oml.warn(f"update_training_progress.progress>1, global_step={global_step},total_steps={total_steps}")
         s.training_progress_bar.progress(progress)
         s.progress_bar_text.markdown(f"👟step {global_step}/{total_steps}, 📈current_loss={current_loss}, 📈avg_loss={avg_loss}") # TODO use steps s.hyper_parameters.num_epochs
         s.current_loss_data.append({"step":global_step, "current_loss":current_loss})    
         s.avg_loss_data.append({"step":global_step, "avg_loss":avg_loss})
         s.current_loss_line_chart_placeholder.line_chart(s.current_loss_data,x="step",y="current_loss")
         s.avg_loss_line_chart_placeholder.line_chart(s.avg_loss_data,x="step",y="avg_loss")
+        return
+    
+    def update_cache_latents_progress(s,image_batch,num_batches,next_image_batch):
+        #oml.debug(f"image_batch={image_batch} with type={type(image_batch)} and len(image_batch)={len(image_batch)},num_batches={num_batches},next_image_batch={next_image_batch}")
+        progress=(next_image_batch/num_batches) # s.hyper_parameters.num_epochs*20
+        s.latent_cache_progress_bar.progress(progress)
         return
     
     def update_training_start_meta_data(s,pre_steps_per_epoch,steps_per_epoch,total_steps,estimated_epochs):
@@ -153,7 +162,10 @@ class App():
         widget=s.body.container()
         widget.subheader("Training progress")
         s.training_status_ph=st.empty()
-        s.training_progress_bar=widget.progress(value=0,text='Step')
+        widget.markdown("**Latent Cache**")
+        s.latent_cache_progress_bar=widget.progress(value=0)
+        widget.markdown("**👟Training Steps**")
+        s.training_progress_bar=widget.progress(value=0)
         s.progress_bar_text=widget.empty()
         s.current_loss_data=[{"step":None, "curret_loss":None}]
         s.avg_loss_data=[{"step":None, "avg_loss":None}]
@@ -228,7 +240,7 @@ class App():
         cols=widget.columns(2)
         col1=cols[0]
         col2=cols[1]        
-        s.settings.project_name=col1.text_input("Project Name", value="bellak_050120240951",placeholder="Unique logical name of your project")
+        s.settings.project_name=col1.text_input("Project Name", value="swwie_080120241807",placeholder="Unique logical name of your project")
         s.settings.project_dir=col2.text_input("Project Directory 📁",value="projects",placeholder="Path to project root folder")
         s.settings.model_cache_folder=col1.text_input("Model Cache Folder 📁", value="D:\Apps\stable-diffusion-webui\models\Stable-diffusion")
         s.settings.model_file=col2.selectbox("Model File", s.get_cached_models()) #text_input("Model File",value="v1-5-pruned-emaonly.safetensors")
