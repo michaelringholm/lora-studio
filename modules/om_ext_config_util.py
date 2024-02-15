@@ -40,6 +40,7 @@ from .om_ext_train_util import (
   DatasetGroup,
 )
 import modules.om_observer as omo
+import modules.om_logging as oml
 
 
 def add_config_arguments(parser: argparse.ArgumentParser):
@@ -319,8 +320,8 @@ class ConfigSanitizer:
     try:
       return self.user_config_validator(user_config)
     except MultipleInvalid:
-      # TODO: エラー発生時のメッセージをわかりやすくする
-      print("Invalid user config / ユーザ設定の形式が正しくないようです")
+      # TODO: Since the behavior of dtype specification seems suspicious, I will confirm it. Whether it is possible to create a text_encoder in the specified format is unconfirmed."
+      oml.error("Invalid user config / It seems that the user-configured format is not correct.")
       raise
 
   # NOTE: In nature, argument parser result is not needed to be sanitize
@@ -329,8 +330,7 @@ class ConfigSanitizer:
     try:
       return self.argparse_config_validator(argparse_namespace)
     except MultipleInvalid:
-      # XXX: this should be a bug
-      print("Invalid cmdline parsed arguments. This should be a bug. / コマンドラインのパース結果が正しくないようです。プログラムのバグの可能性が高いです。")
+      oml.error("Invalid cmdline parsed arguments. This should be a bug. / コマンドラインのパース結果が正しくないようです。プログラムのバグの可能性が高いです。")
       raise
 
   # NOTE: value would be overwritten by latter dict if there is already the same key
@@ -570,13 +570,13 @@ def load_user_config(file: str) -> dict:
       with open(file, 'r') as f:
         config = json.load(f)
     except Exception:
-      print(f"Error on parsing JSON config file. Please check the format. / JSON 形式の設定ファイルの読み込みに失敗しました。文法が正しいか確認してください。: {file}")
+      oml.error(f"Error on parsing JSON config file. Please check the format. / JSON 形式の設定ファイルの読み込みに失敗しました。文法が正しいか確認してください。: {file}")
       raise
   elif file.name.lower().endswith('.toml'):
     try:
       config = toml.load(file)
     except Exception:
-      print(f"Error on parsing TOML config file. Please check the format. / TOML 形式の設定ファイルの読み込みに失敗しました。文法が正しいか確認してください。: {file}")
+      oml.error(f"Error on parsing TOML config file. Please check the format. / TOML 形式の設定ファイルの読み込みに失敗しました。文法が正しいか確認してください。: {file}")
       raise
   else:
     raise ValueError(f"not supported config file format / 対応していない設定ファイルの形式です: {file}")

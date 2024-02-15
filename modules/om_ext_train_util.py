@@ -2127,6 +2127,7 @@ def load_arbitrary_dataset(args, tokenizer) -> MinimalDataset:
     return train_dataset_group
 
 def load_image(image_path):
+    oml.debug(f"loading image {image_path}...")
     image = Image.open(image_path)
     if not image.mode == "RGB":
         image = image.convert("RGB")

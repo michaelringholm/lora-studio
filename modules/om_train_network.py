@@ -701,7 +701,7 @@ class NetworkTrainer:
                         if "latents" in batch and batch["latents"] is not None:
                             latents = batch["latents"].to(accelerator.device)
                             #oml.debug(f"latents_a={latents}")
-                            oml.debug(f"batch[images]={batch['images']}")
+                            #oml.debug(f"batch[images]={batch['images']}")
                         else:
                             latents = vae.encode(batch["images"].to(dtype=vae_dtype)).latent_dist.sample()
                             #oml.debug(f"latents_b={latents}")

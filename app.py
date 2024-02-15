@@ -159,7 +159,7 @@ class App():
         return
 
     def draw_training_progress_widget(s):
-        widget=s.body.container()
+        widget=s.training_tab.container()
         widget.subheader("Training progress")
         s.training_status_ph=st.empty()
         widget.markdown("**Latent Cache**")
@@ -174,7 +174,7 @@ class App():
         return
     
     def draw_training_result_widget(s):
-        s.training_result_widget=s.body.container(border=True)
+        s.training_result_widget=s.training_tab.container(border=True)
         s.training_result_widget.subheader("Training result")
         s.training_result_text=s.training_result_widget.text("Awaiting training job")
         return
@@ -193,7 +193,7 @@ class App():
         return
     
     def draw_hyper_parameter_widget(s):
-        widget=s.body.expander("Hyper Parameters 🎛️")
+        widget=s.hyper_parameters_tab.expander(label="",expanded=True)
         cols=widget.columns(2)
         col1=cols[0]
         col2=cols[1]
@@ -218,7 +218,7 @@ class App():
         return
     
     def draw_training_meta_data(s):
-        widget=s.body.expander("Training Meta Data")
+        widget=s.training_tab.expander("Training Meta Data")
         cols=widget.columns(2)
         col1=cols[0]
         col2=cols[1]
@@ -236,7 +236,7 @@ class App():
     
     def draw_settings_widget(s):
         s.settings=omgs.OMGeneralSettings()
-        widget=s.body.expander("General Settings ⚙️")
+        widget=s.general_settings_tab.expander("General Settings ⚙️",expanded=True)
         cols=widget.columns(2)
         col1=cols[0]
         col2=cols[1]        
@@ -260,11 +260,15 @@ class App():
         return
     
     def draw_environment_widget(s):
-        s.env_widget=s.body.expander("Environment 🌳")
+        s.env_widget=s.environment_tab.expander("Environment 🌳",expanded=True)
         return
+    
+    def draw_tabs(s):
+        s.hyper_parameters_tab,s.general_settings_tab,s.training_tab,s.environment_tab=s.body.tabs(["Hyper Parameters 🎛️","General Settings ⚙️","Training","Environment 🌳"])
     
     def draw_template(s):
         s.body=st.container()
+        s.draw_tabs()
         s.draw_hyper_parameter_widget()
         s.draw_settings_widget()
         s.draw_environment_widget()

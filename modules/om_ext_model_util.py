@@ -997,9 +997,10 @@ def load_checkpoint_with_text_encoder_conversion(ckpt_path, device="cpu"):
     return checkpoint, state_dict
 
 
-# TODO dtype指定の動作が怪しいので確認する text_encoderを指定形式で作れるか未確認
+# TODO I'm suspicious of the behavior of dtype specification, so I will check it. I haven't confirmed whether I can create a text_encoder in the specified format.
 def load_models_from_stable_diffusion_checkpoint(v2, ckpt_path, device="cpu", dtype=None, unet_use_linear_projection_in_v2=True):
     oml.debug(f"load_models_from_stable_diffusion_checkpoint()...")
+    # TODO slow so add callback
     _, state_dict = load_checkpoint_with_text_encoder_conversion(ckpt_path, device)
 
     # Convert the UNet2DConditionModel model.
